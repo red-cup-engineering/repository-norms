@@ -11,7 +11,7 @@ import { checkSubmodules } from "../src/submodules.mjs";
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { org: { type: "string", multiple: true }, warn: { type: "boolean", default: false } } });
 const [command = "check", dir = "."] = positionals;
 const norms = loadNorms();
-const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", maxBuffer: 256 << 20 });
+const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", maxBuffer: 256 << 20, stdio: ["ignore", "pipe", "pipe"] });
 
 if (command === "check") {
   const findings = [];
