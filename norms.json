@@ -1,0 +1,18 @@
+{
+  "kind": "repository-norms.v1",
+  "sourceOfAuthority": "Leader, 2026-10-21: \"we want to normalize the names, x-engineering-services-section, x-science-services-section, etc., or just, the straight app or library name. everything proper submodules, and preferably with real repo and packages to help us manage and enforce these norms.\" House rule every-repository-package-and-section-has-one-home: a section, its package and its repository are one unit, and the directory that composes it is named for its repository.",
+  "sectionSuffix": "-services-section",
+  "organizations": {
+    "lenticule-science": { "domain": "science", "style": "suffix" },
+    "red-cup-engineering": { "domain": "engineering", "style": "suffix" },
+    "coesite-operations": { "domain": "operations", "style": "suffix" },
+    "causeway-services": { "domain": "public", "style": "prefix" },
+    "561-group": { "domain": "561-group", "style": "prefix" }
+  },
+  "sectionTypos": [
+    ["-service-section$", "-services-section"],
+    ["-services-sector$", "-services-section"]
+  ],
+  "archive": "^\\d{4}-\\d{2}-\\d{2}-",
+  "meta": [".github"]
+}

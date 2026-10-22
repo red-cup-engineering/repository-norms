@@ -1,0 +1,13 @@
+{
+  "name": "@red-cup-engineering/repository-norms",
+  "version": "0.1.0",
+  "description": "The 561 Group's repository norms as checks: section names carry their organization's domain, and every submodule is declared once, from a house repository, in a directory named for it.",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "repository-norms": "./bin/repository-norms.mjs" },
+  "exports": { "./naming": "./src/naming.mjs", "./submodules": "./src/submodules.mjs", "./norms.json": "./norms.json" },
+  "files": ["bin", "src", "norms.json", "README.md"],
+  "scripts": { "test": "node --test test/*.test.mjs", "check": "node bin/repository-norms.mjs check ." },
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/red-cup-engineering/repository-norms.git" }
+}
