@@ -14,5 +14,7 @@ jobs:
         with:
           node-version: '24'
       - run: npm test
+      - name: This repository's landing links resolve
+        run: node bin/repository-norms.mjs frontdoor . --json
       - name: This repository meets its own norms
         run: node bin/repository-norms.mjs check .
