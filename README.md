@@ -67,7 +67,10 @@ workflow by an explicitly reviewed commit SHA, not an unspecified branch):
 
 ```yaml
 name: Repository first-visit audit
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
 jobs:
