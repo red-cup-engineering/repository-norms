@@ -1,0 +1,29 @@
+name: Repository first-visit audit
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  frontdoor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout the caller's repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Checkout the immutable observer implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: red-cup-engineering/repository-norms
+          ref: e66de06ca0fd755140dcf35820f6f68fcab2de2b
+          path: .repository-frontdoor-tool
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '24'
+      - name: Check tracked README links and report visitor review prompts
+        run: node .repository-frontdoor-tool/bin/repository-norms.mjs frontdoor . --json

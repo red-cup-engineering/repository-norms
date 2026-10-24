@@ -25,6 +25,63 @@ The 561 Group's repository norms, as checks that run in CI and across the estate
 
 The norms are data in [`norms.json`](norms.json).
 
+## First-visit clarity checks
+
+A person arriving at a GitHub repository should be able to tell **what is here
+now**, **where to begin**, and **what belongs elsewhere**. Repository introductions
+must be checked against tracked sources, not improved by inventing capabilities
+or copying the same boilerplate into every repository.
+
+The optional, read-only `frontdoor` assessment examines the README at `HEAD`
+against the tracked tree (including submodule gitlinks). It reports:
+
+- **Errors:** missing README, broken relative Markdown links, and paths escaping
+  the repository. These can fail CI.
+- **Review prompts:** missing visitor routes/status/boundary explanations and
+  inline code-path mentions absent from the tracked tree. These are **not**
+  automatic semantic judgments: historical and planned paths may be legitimate.
+
+Review the package's actual exports, root directories, current Issues, PRs,
+development branches, owner boundaries, and tests before rewriting prose.
+Explain section/catalog repositories as such; never advertise a root app or
+CLI that does not exist. Link the real component owners. Distinguish source
+code, independently verified behavior, and deployment.
+
+```sh
+node bin/repository-norms.mjs frontdoor . --json  # machine-readable observations
+node bin/repository-norms.mjs frontdoor .          # compact human findings
+node bin/repository-norms.mjs frontdoor . --warn   # no failing exit; advisory survey
+```
+
+The report includes the source commit, line numbers, and observed paths.
+This supplements, rather than replaces, the existing name/submodule `check`
+and the estate-level public repository branding policy owned by
+`github-engineering-services-section`.
+
+### Continuous use in another repository
+
+The [reusable GitHub Actions workflow](.github/workflows/frontdoor.yml)
+checks a **caller's** checked-out HEAD. A repository can opt in with the
+following small `.github/workflows/frontdoor.yml` (pin the referenced
+workflow by an explicitly reviewed commit SHA, not an unspecified branch):
+
+```yaml
+name: Repository first-visit audit
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  frontdoor:
+    uses: red-cup-engineering/repository-norms/.github/workflows/frontdoor.yml@97767b274202af7ff0f95172d1234721da64354f
+```
+
+That reusable workflow checks out both the caller and an immutable,
+version-pinned observer, with no write or credential persistence. It emits
+source-revision-bound findings. This deliberately does not edit repositories
+or auto-approve architectural assertions. When upgrading the observer,
+review and move the pinned implementation and caller refs together.
+
+
 ## Use
 
 ```sh
