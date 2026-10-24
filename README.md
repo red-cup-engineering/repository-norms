@@ -34,4 +34,4 @@ node bin/repository-norms.mjs estate --org red-cup-engineering --org lenticule-s
 ```
 
 In GitHub Actions, call the reusable workflow
-`red-cup-engineering/continuous-delivery-services-section/.github/workflows/repository-norms.yml`.
+`red-cup-engineering/continuous-delivery-engineering-services-section/.github/workflows/repository-norms.yml`.
