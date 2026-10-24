@@ -58,6 +58,30 @@ This supplements, rather than replaces, the existing name/submodule `check`
 and the estate-level public repository branding policy owned by
 `github-engineering-services-section`.
 
+### Continuous use in another repository
+
+The [reusable GitHub Actions workflow](.github/workflows/frontdoor.yml)
+checks a **caller's** checked-out HEAD. A repository can opt in with the
+following small `.github/workflows/frontdoor.yml` (pin the referenced
+workflow by an explicitly reviewed commit SHA, not an unspecified branch):
+
+```yaml
+name: Repository first-visit audit
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  frontdoor:
+    uses: red-cup-engineering/repository-norms/.github/workflows/frontdoor.yml@97767b274202af7ff0f95172d1234721da64354f
+```
+
+That reusable workflow checks out both the caller and an immutable,
+version-pinned observer, with no write or credential persistence. It emits
+source-revision-bound findings. This deliberately does not edit repositories
+or auto-approve architectural assertions. When upgrading the observer,
+review and move the pinned implementation and caller refs together.
+
+
 ## Use
 
 ```sh
