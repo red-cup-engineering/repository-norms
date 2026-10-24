@@ -5,6 +5,7 @@
  * `trackedPaths` must be HEAD's tracked paths, including submodule gitlinks.
  */
 import { posix } from 'node:path';
+import { assessPackageSurface } from "./package-surface.mjs";
 
 const link = /!?\[[^\]\n]*\]\((<?[^)\s>]+>?)(?:\s+"[^"]*")?\)/gu;
 // Capture backtick references without conflating code examples or normal prose.
@@ -19,8 +20,9 @@ function target(href) {
   return { path: path.replace(/^\.\//u, '').replace(/\/$/u, '') };
 }
 
-export function assessFrontdoor({ readme, trackedPaths = undefined } = {}) {
-  const findings = [], observed = { openingLine: null, headings: [], checkedRelativeLinks: 0, checkedCodePaths: 0 };
+export function assessFrontdoor({ readme, trackedPaths = undefined, packageJson = undefined } = {}) {
+  const surface = assessPackageSurface({ packageJson, trackedPaths });
+  const findings = [...surface.findings], observed = { openingLine: null, headings: [], checkedRelativeLinks: 0, checkedCodePaths: 0 };
   const seen = new Set();
   const finding = (severity, rule, line, detail) => {
     const key = `${rule}\u0000${line}\u0000${detail}`;
@@ -28,7 +30,7 @@ export function assessFrontdoor({ readme, trackedPaths = undefined } = {}) {
   };
   if (typeof readme !== 'string' || !readme.trim()) {
     finding('error', 'readme-missing', 1, 'No readable README.md at HEAD');
-    return { kind: 'repository-frontdoor-observation.v1', observed, findings };
+    return { kind: 'repository-frontdoor-observation.v1', observed, packageSurface: surface, findings };
   }
   const lines = readme.replace(/\r\n/gu, '\n').split('\n');
   let fenced = false, fenceMark = '', inComment = false;
@@ -91,5 +93,5 @@ export function assessFrontdoor({ readme, trackedPaths = undefined } = {}) {
     finding('review', 'status-needs-review', 1, 'Distinguish implemented and independently verified work from plans, proposals or unverified features');
   if (!headings.some((h) => /scope|boundar|relation|responsibilit|does not|not here|architecture|fits|specialization/iu.test(h)) && !/\b(?:does not|is not|rather than|not a)\b/iu.test(text))
     finding('review', 'boundary-needs-review', 1, 'Explain what this repository owns and what adjacent components own instead');
-  return { kind: 'repository-frontdoor-observation.v1', observed, findings };
+  return { kind: 'repository-frontdoor-observation.v1', observed, packageSurface: surface, findings };
 }
