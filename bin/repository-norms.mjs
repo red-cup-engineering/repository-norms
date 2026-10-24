@@ -31,6 +31,7 @@ if (command === "check") {
   process.stdout.write(`${findings.length} finding(s) in ${slug ?? dir}\n`);
   if (findings.length && !values.warn) process.exitCode = 1;
 } else if (command === "frontdoor") {
+  const slug = process.env.GITHUB_REPOSITORY ?? (() => { try { return /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/u.exec(git("remote", "get-url", "origin").trim())?.[1]; } catch { return undefined; } })();
   const readme = (() => { try { return git("show", "HEAD:README.md"); } catch { return undefined; } })();
   const trackedPaths = git("ls-tree", "-r", "--name-only", "HEAD").split("\n").filter(Boolean);
   const report = assessFrontdoor({ readme, trackedPaths });
