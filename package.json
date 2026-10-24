@@ -11,7 +11,8 @@
     "./naming": "./src/naming.mjs",
     "./submodules": "./src/submodules.mjs",
     "./norms.json": "./norms.json",
-    "./frontdoor": "./src/frontdoor.mjs"
+    "./frontdoor": "./src/frontdoor.mjs",
+    "./package-surface": "./src/package-surface.mjs"
   },
   "files": [
     "bin",
