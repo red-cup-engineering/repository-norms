@@ -65,3 +65,17 @@ test('rejects relative escapes while preserving explicit uncertainty for user-fa
   assert.equal(r.findings.some(x=>x.rule==='status-needs-review'),true);
   assert.equal(r.findings.some(x=>x.rule==='entry-route-needs-review'),true);
 });
+
+
+test('reports unmentioned submodule owners as advisory, not false broken-link errors', () => {
+  const readme = '# Composed agent environment\n\nPlatforms bring together source-owned agents.\n\n## Where to begin\n\n[Live source](apps/feltos)\n\n## Current status\n\nSource composition only.\n\n## Scope\n\nHosting is separate.\n';
+  const r=assessFrontdoor({
+    readme,
+    trackedPaths:['README.md','apps/feltos','services/metroplat'],
+    gitmodules:'[submodule "feltos"]\n  path = apps/feltos\n  url = https://github.com/red-cup-engineering/feltos.git\n[submodule "metroplat"]\n  path = services/metroplat\n  url = https://github.com/red-cup-engineering/metroplat.git\n',
+    gitlinks:['apps/feltos','services/metroplat']
+  });
+  assert.deepEqual(r.observed.composition, {tracked:2,mentioned:1,missing:['services/metroplat']});
+  assert.equal(r.findings.some(x=>x.rule==='composition-visibility-needs-review'),true);
+  assert.equal(r.findings.some(x=>x.rule==='missing-relative-link'),false);
+});

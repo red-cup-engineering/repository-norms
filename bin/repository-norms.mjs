@@ -33,8 +33,11 @@ if (command === "check") {
 } else if (command === "frontdoor") {
   const slug = process.env.GITHUB_REPOSITORY ?? (() => { try { return /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/u.exec(git("remote", "get-url", "origin").trim())?.[1]; } catch { return undefined; } })();
   const readme = (() => { try { return git("show", "HEAD:README.md"); } catch { return undefined; } })();
+  const packageJson = (() => { try { return git("show", "HEAD:package.json"); } catch { return undefined; } })();
   const trackedPaths = git("ls-tree", "-r", "--name-only", "HEAD").split("\n").filter(Boolean);
-  const report = assessFrontdoor({ readme, trackedPaths });
+  const gitmodules = (() => { try { return git("show", "HEAD:.gitmodules"); } catch { return ""; } })();
+  const gitlinks = git("ls-tree", "-r", "HEAD").split("\n").filter((l) => l.startsWith("160000 ")).map((l) => l.split("\t")[1]);
+  const report = assessFrontdoor({ readme, packageJson, trackedPaths, gitmodules, gitlinks });
   const output = { repository: slug ?? dir, revision: git("rev-parse", "HEAD").trim(), ...report };
   if (values.json) process.stdout.write(`${JSON.stringify(output)}\n`);
   else {

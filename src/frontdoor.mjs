@@ -5,6 +5,8 @@
  * `trackedPaths` must be HEAD's tracked paths, including submodule gitlinks.
  */
 import { posix } from 'node:path';
+import { assessPackageSurface } from "./package-surface.mjs";
+import { parseGitmodules } from "./submodules.mjs";
 
 const link = /!?\[[^\]\n]*\]\((<?[^)\s>]+>?)(?:\s+"[^"]*")?\)/gu;
 // Capture backtick references without conflating code examples or normal prose.
@@ -19,8 +21,12 @@ function target(href) {
   return { path: path.replace(/^\.\//u, '').replace(/\/$/u, '') };
 }
 
-export function assessFrontdoor({ readme, trackedPaths = undefined } = {}) {
-  const findings = [], observed = { openingLine: null, headings: [], checkedRelativeLinks: 0, checkedCodePaths: 0 };
+export function assessFrontdoor({ readme, trackedPaths = undefined, packageJson = undefined, gitmodules = "", gitlinks = undefined } = {}) {
+  const surface = assessPackageSurface({ packageJson, trackedPaths });
+  const findings = [...surface.findings], observed = {
+    openingLine: null, headings: [], checkedRelativeLinks: 0, checkedCodePaths: 0,
+    composition: { tracked: 0, mentioned: 0, missing: [] }
+  };
   const seen = new Set();
   const finding = (severity, rule, line, detail) => {
     const key = `${rule}\u0000${line}\u0000${detail}`;
@@ -28,7 +34,7 @@ export function assessFrontdoor({ readme, trackedPaths = undefined } = {}) {
   };
   if (typeof readme !== 'string' || !readme.trim()) {
     finding('error', 'readme-missing', 1, 'No readable README.md at HEAD');
-    return { kind: 'repository-frontdoor-observation.v1', observed, findings };
+    return { kind: 'repository-frontdoor-observation.v1', observed, packageSurface: surface, findings };
   }
   const lines = readme.replace(/\r\n/gu, '\n').split('\n');
   let fenced = false, fenceMark = '', inComment = false;
@@ -81,6 +87,23 @@ export function assessFrontdoor({ readme, trackedPaths = undefined } = {}) {
       }
     }
   }
+  // A section README need not explain every child in full, but omitted Git
+  // submodule owners are a discoverability question. Report one bounded, human
+  // review finding; never call missing mention a deployment or validity error.
+  if (Array.isArray(gitlinks)) {
+    const tracked = new Set(gitlinks);
+    const declared = parseGitmodules(gitmodules);
+    const byPath = new Map(declared.map(x => [x.path, x.url]));
+    const missing = [...tracked].sort().filter(path => {
+      const url = byPath.get(path);
+      return !readme.includes(path) && !(url && readme.includes(url.replace(/\\.git$/u, "")));
+    });
+    observed.composition = { tracked: tracked.size, mentioned: tracked.size - missing.length, missing };
+    if (missing.length) {
+      finding("review", "composition-visibility-needs-review", 1,
+        `${missing.length}/${tracked.size} tracked submodule owners have no explicit README path/URL reference; sample: ${missing.slice(0, 8).join(", ")}`);
+    }
+  }
   const headings = observed.headings.map((h) => h.title.toLowerCase());
   const text = body.join('\n');
   const beforeFirstSection = text.split(/^##\s/um)[0].replace(/^# .+$/um, '').trim();
@@ -91,5 +114,5 @@ export function assessFrontdoor({ readme, trackedPaths = undefined } = {}) {
     finding('review', 'status-needs-review', 1, 'Distinguish implemented and independently verified work from plans, proposals or unverified features');
   if (!headings.some((h) => /scope|boundar|relation|responsibilit|does not|not here|architecture|fits|specialization/iu.test(h)) && !/\b(?:does not|is not|rather than|not a)\b/iu.test(text))
     finding('review', 'boundary-needs-review', 1, 'Explain what this repository owns and what adjacent components own instead');
-  return { kind: 'repository-frontdoor-observation.v1', observed, findings };
+  return { kind: 'repository-frontdoor-observation.v1', observed, packageSurface: surface, findings };
 }

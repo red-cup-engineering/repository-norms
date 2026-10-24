@@ -41,6 +41,20 @@ against the tracked tree (including submodule gitlinks). It reports:
   inline code-path mentions absent from the tracked tree. These are **not**
   automatic semantic judgments: historical and planned paths may be legitimate.
 
+For repositories composed from Git submodules, the check also counts
+tracked gitlinks whose paths or canonical GitHub URLs are absent from the
+README. It produces **one advisory coverage finding**, with the unmentioned
+paths visible in JSON. The report does not force every child into the
+README or mistake an omitted name for a broken installation.
+
+The same assessment now also reads the tracked root `package.json` (if
+present). It reports declared export and binary paths, package identity, and
+explicit Node test/check command targets. A missing tracked `src/` or test
+file is an objective contradiction between the manifest and its repository;
+a `dist/` target not yet built is an advisory **build-product review**, not
+proof of failure. The output does not imply that imports succeed, tests pass,
+the package was published, or a runtime is deployed.
+
 Review the package's actual exports, root directories, current Issues, PRs,
 development branches, owner boundaries, and tests before rewriting prose.
 Explain section/catalog repositories as such; never advertise a root app or
