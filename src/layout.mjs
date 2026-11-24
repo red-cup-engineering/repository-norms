@@ -1,23 +1,19 @@
-import { createGit } from "@red-cup-engineering/git-engine/git-process";
 import { walkPosixPathsSync } from "@red-cup-engineering/computer-filepath-engineering-services-section/walk-posix-paths";
 import { DATA_CUSTODY_KINDS } from "@red-cup-engineering/data-custody-directory-service";
-import { planMovedPathReferenceUpdates } from "@red-cup-engineering/service-section-engineering-services-section/plan-moved-path-reference-updates";
+import { admitDispositions, applyRelocation, planRelocation as planResourceRelocation, proposeRelocation, verifyRelocation } from "@red-cup-engineering/computer-file-engine/relocation";
 /**
  * Directory layout norms over a tree of checked-out repositories. Every rule is a row of the section law's relocations
  * (`from` is a path variant, `to` the canonical path, both relative to the same directory at any depth of a repository):
  * - `checkLayout` reports each variant directory found;
- * - `relocate` moves one rule's variants onto their canonical paths with `git mv` inside the owning repository and
- *   rewrites the references that provably named a moved path;
+ * - `relocate` moves one rule's variants onto their canonical paths inside the owning repository and rewrites the
+ *   references to them;
  * - `censusLayout` counts directory names at the standard layout positions and proposes further rules.
  * Nothing here writes a file of its own: rows are returned to the caller.
- * The tree walk is the filepath section's `walkPosixPathsSync`, the reference edits are the services-section engine's
- * `planMovedPathReferenceUpdates`, a whole-directory move in the worktree is the relocating-directory service's, and
- * the names `data/` may hold are the data-custody-directory service's.
+ * The tree walk is the filepath section's `walkPosixPathsSync`, the moving and the reference rewriting are the file
+ * engine's one relocation, and the names `data/` may hold are the data-custody-directory service's.
  */
-import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, realpathSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, posix, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync } from "node:fs";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { loadNorms } from "./naming.mjs";
 
 const under = (path, directory) => directory === "" || path === directory || path.startsWith(`${directory}/`);
@@ -34,7 +30,6 @@ export function canonicalOf(path, { from, to }) {
 // A directory another process removed during the walk reads as empty.
 const entries = (directory) => { try { return readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)); } catch (error) { if (error.code === "ENOENT") return []; throw error; } };
 const isRepository = (directory) => existsSync(join(directory, ".git"));
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
 /** The layout norms with their defaults filled in. */
 export function layoutOf(norms = loadNorms()) {
@@ -82,41 +77,29 @@ export function* walkDirectories(root, { skip = [] } = {}) {
   yield* found;
 }
 
-/** The files under `directory`, as paths relative to it, and whether a nested repository sits among them. */
-function filesUnder(directory) {
-  const files = [];
-  let nestedRepository = false;
-  const visit = (current, prefix) => {
-    for (const entry of entries(current)) {
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.name === ".git") nestedRepository = true;
-      else if (entry.isDirectory()) visit(join(current, entry.name), path);
-      else files.push(path);
-    }
-  };
-  visit(directory, "");
-  return { files, nestedRepository };
+/** The workspace root and repository name the file engine names a repository by: the repository's parent and its own directory name. */
+const repositoryAt = (repository) => ({ workspaceRoot: dirname(repository), name: basename(repository) });
+
+/** The file engine's request to move the variant directory `found` onto `canonical` inside `repository`. */
+function requestFor(repository, found, canonical, rest = {}) {
+  const { workspaceRoot, name } = repositoryAt(repository);
+  return { workspaceRoot, source: { repository: name }, destination: { repository: name, moves: [{ from: found, to: canonical }] }, proposedBy: "repository-norms", ...rest };
 }
 
-function sameContent(a, b) {
-  const [x, y] = [lstatSync(a), lstatSync(b)];
-  if (x.isSymbolicLink() || y.isSymbolicLink()) return x.isSymbolicLink() && y.isSymbolicLink() && readlinkSync(a) === readlinkSync(b);
-  return x.isFile() && y.isFile() && x.size === y.size && readFileSync(a).equals(readFileSync(b));
-}
-
-/** What moving the variant directory `found` onto `canonical` would do to each file: move it, drop it, or keep it. */
+/** What moving the variant directory `found` onto `canonical` would do to each file: move it, drop it (same content there), or keep it. */
 function planRelocation(repository, found, canonical) {
-  const { files, nestedRepository } = filesUnder(join(repository, found));
-  const plan = { files: files.length, canonicalExists: existsSync(join(repository, canonical)), move: [], drop: [], keep: [], nestedRepository };
-  for (const file of files) {
-    const [from, to] = [`${found}/${file}`, `${canonical}/${file}`];
-    const target = lstatSync(join(repository, to), { throwIfNoEntry: false });
-    // A file where a directory of the path is needed leaves nothing to move onto.
-    const blocked = !target && to.split("/").some((_, i, parts) => i > 0 && lstatSync(join(repository, parts.slice(0, i).join("/")), { throwIfNoEntry: false })?.isDirectory() === false);
-    if (!target && !blocked) plan.move.push({ from, to });
-    else if (target && sameContent(join(repository, from), join(repository, to))) plan.drop.push({ from, to });
-    else plan.keep.push(from);
-  }
+  const plan = { files: 0, canonicalExists: existsSync(join(repository, canonical)), move: [], drop: [], keep: [], nestedRepository: false };
+  let proposal;
+  try { proposal = proposeRelocation(requestFor(repository, found, canonical)); } catch { return plan; }
+  const inside = (path) => path.slice(path.indexOf("/") + 1);
+  plan.nestedRepository = proposal.refusals.some((item) => item.reason === "nested repository");
+  plan.refusals = proposal.refusals;
+  const { admitted } = admitDispositions(proposal);
+  const within = (location) => location.slice(repositoryAt(repository).name.length + 1);
+  for (const item of admitted.moves) (item.disposition === "move" ? plan.move : plan.drop).push({ from: within(item.from), to: within(item.to) });
+  for (const item of admitted.collisions) plan.keep.push(within(item.from));
+  plan.files = plan.move.length + plan.drop.length + plan.keep.length;
+  void inside;
   return plan;
 }
 
@@ -143,121 +126,17 @@ export function* reportLayout(root, options) {
   for (const row of checkLayout(root, options)) yield withoutPlan(row);
 }
 
-function removeEmptyDirectories(directory) {
-  for (const entry of entries(directory)) if (entry.isDirectory()) removeEmptyDirectories(join(directory, entry.name));
-  if (readdirSync(directory).length === 0) rmdirSync(directory);
-}
-
-/** Text files of `repository` (tracked, or untracked and not ignored) outside the `skip` paths, as relative paths. */
-function textFiles(repository, git, skip, patterns) {
-  const output = git(repository, ["grep", "-l", "-z", "-I", "--untracked", "-E", ...patterns.flatMap((p) => ["-e", p])], { ok: [0, 1] });
-  return output.split("\0").filter(Boolean).filter((file) => !file.split("/").some((_, i, parts) => skip.some((tail) => endsWithPath(parts.slice(0, i + 1).join("/"), tail))));
-}
-
-/** What a mention of a variant path that is still standing is: the classes `relocate` reports `remaining` references by. */
-export const REMAINING = Object.freeze({
-  moved: "resolves to a moved path, not rewritten",
-  absolute: "absolute path or URL",
-  none: "names no moved path",
-  ambiguous: "ambiguous: the planner held its plan",
-});
-
 /**
- * The class of one mention of a variant path in `line`: an absolute path or URL (the token holding it starts at `/`,
- * `~` or a scheme, so it is not a path of this repository); one that, read repository-relative or relative to the
- * file it stands in (`origin`, where the file stood before the move), is a moved file or a directory holding one; else
- * one that names no moved path (prose, a missing file, a file a collision kept in place).
+ * Moves every variant directory of one rule under `root` onto its canonical path, in the repository that owns it: the
+ * file engine's one relocation, each variant directory one move whose support is the section law's rule.
+ * A file the canonical directory lacks is moved (and staged as `git mv` would, when tracked); a file it already holds with
+ * the same content is dropped from the variant; a file it holds with other content stays where it is and is listed in
+ * `kept`. With `worktree` no git command writes, so the index is untouched. Without `apply` nothing changes.
+ * Yields one `relocation` row per variant directory, then one `references` row per repository changed: the references
+ * rewritten, the mentions of a moved path the move left naming it (`remaining`) and the bare names held as ambiguous.
+ * A rule the section law holds, and a variant directory holding a nested repository, are refused.
  */
-function classifyRemaining(line, found, { origin, moved }) {
-  const start = found.index, end = start + found[0].length;
-  let from = start, to = end;
-  while (from > 0 && !/[\s"'`()<>[\],;]/u.test(line[from - 1])) from -= 1;
-  while (to < line.length && !/[\s"'`()<>[\],;]/u.test(line[to])) to += 1;
-  const token = line.slice(from, to);
-  if (/^(?:[a-z][a-z0-9+.-]*:\/\/|\/|~)/iu.test(token)) return REMAINING.absolute;
-  const resolved = new Set([posix.normalize(found[0]).replace(/\/$/u, ""), posix.join(posix.dirname(origin), found[0]).replace(/\/$/u, "")]);
-  for (const path of resolved) for (const old of moved.keys()) if (old === path || old.startsWith(`${path}/`)) return REMAINING.moved;
-  return REMAINING.none;
-}
-
-const RELOCATION_FROM = /"from"\s*:/u;
-/**
- * A statement of the rule is not a reference to a path. Of the lines the planner changed, a line stays as it was when it
- * is a `"from"` field (a relocation row's own variant path) or when it already names both the rule's variant path and its
- * canonical path ("X is forbidden; use Y": rewriting X would make it read "Y is forbidden; use Y"). A rewrite that
- * changed the number of lines is kept whole, as the lines cannot be paired.
- */
-export function statedRulesKept(before, after, { from, to }) {
-  const was = before.split("\n"), now = after.split("\n");
-  if (was.length !== now.length) return after;
-  const names = (line, path) => new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(path)}(?![A-Za-z0-9_-])`, "u").test(line);
-  return now.map((line, index) => (line !== was[index] && (RELOCATION_FROM.test(was[index]) || (names(was[index], from) && names(was[index], to))) ? was[index] : line)).join("\n");
-}
-
-/**
- * Rewrites the references `repository` holds to paths a relocation moved, and lists the mentions of the variant path
- * that are left. The edits are the services-section engine's `planMovedPathReferenceUpdates`: repository-relative and
- * file-relative paths to a moved file or a wholly moved directory, and in a moved file its relative paths to files that
- * stayed. When the planner holds its plan (a bare directory name it cannot tell from a word) nothing is rewritten.
- * `moved` maps old file path to new; a directory a collision left a file in did not wholly move, so it is not rewritten.
- */
-function rewriteReferences(repository, entry, { moved, apply, git, skip, lawSources = [] }) {
-  const oldOf = new Map([...moved].map(([from, to]) => [to, from]));
-  const text = (file) => {
-    const found = lstatSync(join(repository, file), { throwIfNoEntry: false });
-    if (!found?.isFile()) return null;
-    const bytes = readFileSync(join(repository, file));
-    return bytes.includes(0) ? null : bytes.toString("utf8");
-  };
-  // The files as they stand now; before `apply` a moved file is read where it still is and planned where it will be.
-  const standing = git(repository, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]).split("\0").filter((file) => file && lstatSync(join(repository, file), { throwIfNoEntry: false }));
-  const tracked = [...new Set(standing.map((file) => (apply ? oldOf.get(file) ?? file : file)))];
-  // Any text file may hold a path relative to itself, so each one outside the skipped paths is handed to the planner.
-  // The law's own data files (`norms.lawSources`, the files the section-law loader reads) are never rewritten: a rule
-  // states a path, it does not refer to it. A law file that is itself moved is known by where it stood and where it stands.
-  const law = new Set(lawSources.map((file) => resolve(file)));
-  const isLaw = (file) => [file, oldOf.get(file)].some((name) => name !== undefined && [join(repository, name), (() => { try { return realpathSync(join(repository, name)); } catch { return null; } })()].some((path) => path !== null && law.has(resolve(path))));
-  const candidates = new Set(textFiles(repository, git, skip, ["^"]).filter((file) => !isLaw(file)));
-  const files = [...candidates].sort().flatMap((file) => { const read = text(file); return read === null ? [] : [{ at: file, path: apply ? file : moved.get(file) ?? file, text: read }]; });
-  const rewritten = [], remaining = [];
-  let planned = [];
-  try {
-    planned = planMovedPathReferenceUpdates({ tracked, moves: [...moved].map(([from, to]) => ({ from, to })), files: files.map(({ path, text: read }) => ({ path, text: read })) });
-  } catch (error) {
-    if (error.code !== "ERR_AMBIGUOUS_DIRECTORY_REFERENCE") throw error;
-    remaining.push({ file: error.path, text: error.reference, class: REMAINING.ambiguous, reason: "the reference planner held its plan: a bare directory name may not be a path" });
-  }
-  const after = new Map(planned.map((plan) => [plan.path, plan]));
-  const mention = new RegExp(`(?<![A-Za-z0-9_-])(?:[A-Za-z0-9_.@-]+/)*${escapeRegExp(entry.from)}(?![A-Za-z0-9_-])(?:/[A-Za-z0-9_.@%-]+)*/?`, "gu");
-  for (const file of files) {
-    const plan = after.get(file.path);
-    for (const update of plan?.updates ?? []) rewritten.push({ file: file.path, from: update.from, to: update.to, count: update.count });
-    const kept = plan ? statedRulesKept(file.text, plan.text, entry) : file.text;
-    if (plan && apply && kept !== file.text) writeFileSync(join(repository, file.at), kept);
-    const origin = apply ? oldOf.get(file.at) ?? file.at : file.at;
-    kept.split("\n").forEach((line, index) => {
-      for (const found of line.matchAll(mention)) remaining.push({ file: file.path, line: index + 1, text: found[0], class: classifyRemaining(line, found, { origin, moved }), reason: "left by the reference planner" });
-    });
-  }
-  return { rewritten, remaining, remainingByClass: Object.fromEntries(Object.values(REMAINING).map((name) => [name, remaining.filter((row) => row.class === name).length])) };
-}
-
-/** Moves a whole directory with the relocating-directory service: one rename, never a merge or an overwrite. */
-function relocateWholeDirectory(source, destination) {
-  const service = fileURLToPath(import.meta.resolve("@red-cup-engineering/relocating-directory-service"));
-  const run = spawnSync(process.execPath, [service, "--source", source, "--destination", destination, "--apply"], { encoding: "utf8" });
-  if (run.status !== 0) throw new Error((run.stderr || run.error?.message || `relocate-directory exited ${run.status}`).trim());
-}
-
-/**
- * Moves every variant directory of one rule under `root` onto its canonical path, in the repository that owns it.
- * A file the canonical directory lacks is moved (`git mv` when tracked); a file it already holds with the same content
- * is dropped from the variant; a file it holds with other content stays where it is and is listed in `kept`.
- * With `worktree` every move and drop is a plain rename or unlink: no git command writes, so the index is untouched.
- * Without `apply` nothing changes. Yields one `relocation` row per variant directory, then one `references` row per
- * repository changed. A rule the section law holds, and a variant directory holding a nested repository, are refused.
- */
-export function* relocate(root, { rule, apply = false, worktree = false, norms = loadNorms(), git = createGit() } = {}) {
+export async function* relocate(root, { rule, apply = false, worktree = false, norms = loadNorms() } = {}) {
   const { skip, relocations } = layoutOf(norms);
   const entry = relocations.find((candidate) => candidate.rule === rule);
   if (!entry) throw new Error(`no layout rule named ${rule}; the section law has ${relocations.map((candidate) => candidate.rule).join(", ")}`);
@@ -266,51 +145,32 @@ export function* relocate(root, { rule, apply = false, worktree = false, norms =
   for (const { plan, ...row } of [...checkLayout(root, { rule, norms })]) {
     const { repository, found } = row;
     if (plan.nestedRepository) { yield { kind: "relocation", ...row, outcome: "refused", reason: "the variant directory holds a nested repository" }; continue; }
-    const state = changed.get(repository) ?? { moved: new Map(), kept: [] };
+    const state = changed.get(repository) ?? { rewritten: [], remaining: [], ambiguous: [] };
     changed.set(repository, state);
-    const failed = [];
-    let untracked = 0;
-    if (apply) {
-      const tracked = new Set(worktree ? [] : git(repository, ["ls-files", "-z", "--", found]).split("\0").filter(Boolean));
-      const attempt = (file, act) => { try { act(); return true; } catch (error) { failed.push({ file, error: String(error.message ?? error).split("\n")[0] }); return false; } };
-      // Nothing stands at the canonical path: with `worktree` the directory moves whole, by the relocating-directory service.
-      const whole = worktree && !plan.canonicalExists && plan.move.length > 0 && attempt(found, () => relocateWholeDirectory(join(repository, found), join(repository, row.canonical)));
-      if (whole) for (const { from, to } of plan.move) state.moved.set(from, to);
-      for (const { from, to } of whole ? [] : plan.move) {
-        if (!worktree && !tracked.has(from)) untracked += 1;
-        const done = attempt(from, () => {
-          mkdirSync(dirname(join(repository, to)), { recursive: true });
-          if (tracked.has(from)) git(repository, ["mv", "--", from, to]);
-          else renameSync(join(repository, from), join(repository, to));
-        });
-        if (done) state.moved.set(from, to); else state.kept.push(from);
-      }
-      for (const { from, to } of plan.drop) {
-        if (!worktree && !tracked.has(from)) untracked += 1;
-        const done = attempt(from, () => {
-          if (!tracked.has(from)) return unlinkSync(join(repository, from));
-          // The canonical copy takes the dropped copy's place in the index when it was not tracked itself.
-          if (git(repository, ["ls-files", "--", to]) === "") git(repository, ["add", "--", to], { ok: [0, 1] });
-          git(repository, ["rm", "-q", "-f", "--", from]);
-        });
-        if (done) state.moved.set(from, to); else state.kept.push(from);
-      }
-      if (existsSync(join(repository, found))) removeEmptyDirectories(join(repository, found));
-    } else {
-      for (const { from, to } of [...plan.move, ...plan.drop]) state.moved.set(from, to);
+    const kept = plan.keep.map((file) => ({ file, canonical: `${row.canonical}${file.slice(found.length)}` }));
+    const request = requestFor(repository, found, row.canonical, { references: "mentions", supportedBy: `the section law's layout rule ${rule}`, excludeCarriers: norms.lawSources ?? [], stage: apply && !worktree });
+    if (plan.files === 0 || plan.move.length + plan.drop.length === 0) {
+      yield { kind: "relocation", ...row, outcome: apply ? "moved" : "would move", moved: 0, dropped: 0, kept };
+      continue;
     }
-    state.kept.push(...plan.keep);
-    yield {
-      kind: "relocation", ...row, outcome: apply ? (failed.length ? "moved in part" : "moved") : "would move",
-      moved: plan.move.length - failed.filter(({ file }) => plan.move.some(({ from }) => from === file)).length,
-      dropped: plan.drop.length - failed.filter(({ file }) => plan.drop.some(({ from }) => from === file)).length,
-      kept: plan.keep.map((file) => ({ file, canonical: `${row.canonical}${file.slice(found.length)}` })),
-      ...(untracked ? { untracked } : {}), ...(failed.length ? { failed } : {}),
-    };
+    let planned, verified;
+    try {
+      planned = await planResourceRelocation(request);
+      if (planned.refusals.length) throw new Error(planned.refusals.map((item) => `${item.path}: ${item.reason}`).join("; "));
+      if (apply) { applyRelocation(planned, { stage: request.stage }); verified = await verifyRelocation(planned); }
+    } catch (error) { yield { kind: "relocation", ...row, outcome: "refused", reason: String(error.message ?? error).split("\n")[0] }; continue; }
+    for (const edit of planned.rewrites) {
+      const counts = new Map();
+      for (const reference of edit.references) counts.set(`${reference.before}\u0000${reference.after}`, (counts.get(`${reference.before}\u0000${reference.after}`) ?? 0) + 1);
+      for (const [key, count] of counts) { const [before, after] = key.split("\u0000"); state.rewritten.push({ file: edit.path.slice(basename(repository).length + 1), from: before, to: after, count }); }
+    }
+    state.remaining.push(...(verified?.dangling ?? []).map((item) => ({ file: item.path.slice(basename(repository).length + 1), text: item.reference })));
+    state.ambiguous.push(...planned.ambiguous.map((item) => ({ file: item.path.slice(basename(repository).length + 1), text: item.reference })));
+    yield { kind: "relocation", ...row, outcome: apply ? "moved" : "would move", moved: plan.move.length, dropped: plan.drop.length, kept };
   }
-  for (const [repository, { moved, kept }] of changed) {
-    if (moved.size === 0) continue;
-    yield { kind: "references", rule, repository, outcome: apply ? "rewritten" : "would rewrite", ...rewriteReferences(repository, entry, { moved, apply, git, skip, lawSources: norms.lawSources ?? [] }) };
+  for (const [repository, { rewritten, remaining, ambiguous }] of changed) {
+    if (rewritten.length === 0 && ambiguous.length === 0) continue;
+    yield { kind: "references", rule, repository, outcome: apply ? "rewritten" : "would rewrite", rewritten, remaining, ambiguous, remainingByClass: { "resolves to a moved path": remaining.length, "ambiguous: held, a bare name may not be a path": ambiguous.length } };
   }
 }
 

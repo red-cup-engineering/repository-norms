@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { classifyName, loadNorms } from "../src/naming.mjs";
 import { checkSubmodules } from "../src/submodules.mjs";
 import { assessFrontdoor } from "../src/frontdoor.mjs";
-import { REMAINING, censusLayout, relocate, reportLayout } from "../src/layout.mjs";
+import { censusLayout, relocate, reportLayout } from "../src/layout.mjs";
 import { bareReadmes, forbiddenFiles, sourcelessManifests } from "../src/removals.mjs";
 import { readFileSync } from "node:fs";
 import { usageText } from "../src/usage.mjs";
@@ -59,7 +59,7 @@ if (values.help || command === undefined) {
 } else if (command === "relocate") {
   if (!values.rule) { process.stderr.write("relocate needs --rule RULE\n"); process.exit(2); }
   const counts = {};
-  for (const row of relocate(dir, { rule: values.rule, apply: values.apply, worktree: values.worktree, norms })) {
+  for await (const row of relocate(dir, { rule: values.rule, apply: values.apply, worktree: values.worktree, norms })) {
     line(row);
     if (row.kind === "relocation") for (const [key, n] of [[row.outcome, 1], ["files moved", row.moved ?? 0], ["files dropped as identical", row.dropped ?? 0], ["files kept on collision", row.kept?.length ?? 0], ["files failed", row.failed?.length ?? 0]]) counts[key] = (counts[key] ?? 0) + n;
     else {
@@ -68,8 +68,8 @@ if (values.help || command === undefined) {
     }
   }
   process.stderr.write(`${JSON.stringify(counts)}\n`);
-  const left = counts[`references left, ${REMAINING.moved}`];
-  if (Object.keys(counts).some((key) => key.startsWith("references left"))) process.stderr.write(`references left are mentions of the variant path the planner did not rewrite: "${REMAINING.moved}" is a defect (exit 1); "${REMAINING.absolute}" and "${REMAINING.none}" are not this repository's moved paths; "${REMAINING.ambiguous}" is a bare name the planner could not tell from a word\n`);
+  const left = counts["references left, resolves to a moved path"];
+  if (Object.keys(counts).some((key) => key.startsWith("references left"))) process.stderr.write("references left are mentions of the variant path the move did not rewrite: \"resolves to a moved path\" is a defect (exit 1); \"ambiguous\" is a bare name held because it may not be a path\n");
   if (counts["files failed"] || left) process.exitCode = 1;
 } else if (command === "forbidden" || command === "manifests" || command === "readmes") {
   const counts = {};

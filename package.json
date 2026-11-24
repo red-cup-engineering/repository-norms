@@ -42,7 +42,7 @@
     "@red-cup-engineering/git-engine": "^0.1.11-dev.0",
     "@red-cup-engineering/computer-filepath-engineering-services-section": "^0.1.7-dev.0",
     "@red-cup-engineering/data-custody-directory-service": "^0.3.6-dev.0",
-    "@red-cup-engineering/relocating-directory-service": "^1.0.0",
+    "@red-cup-engineering/computer-file-engine": "^0.1.0",
     "@red-cup-engineering/service-section-engineering-services-section": "^0.2.9-dev.0"
   }
 }
