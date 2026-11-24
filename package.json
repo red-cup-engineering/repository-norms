@@ -14,7 +14,8 @@
     "./frontdoor": "./src/frontdoor.mjs",
     "./package-surface": "./src/package-surface.mjs",
     "./layout": "./src/layout.mjs",
-    "./removals": "./src/removals.mjs"
+    "./removals": "./src/removals.mjs",
+    "./rules": "./src/rules.mjs"
   },
   "files": [
     "bin",
@@ -38,6 +39,10 @@
     "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
   },
   "dependencies": {
-    "@red-cup-engineering/git-engine": "^0.1.11-dev.0"
+    "@red-cup-engineering/git-engine": "^0.1.11-dev.0",
+    "@red-cup-engineering/computer-filepath-engineering-services-section": "^0.1.7-dev.0",
+    "@red-cup-engineering/data-custody-directory-service": "^0.3.6-dev.0",
+    "@red-cup-engineering/relocating-directory-service": "^1.0.0",
+    "@red-cup-engineering/service-section-engineering-services-section": "^0.2.9-dev.0"
   }
 }

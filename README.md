@@ -121,11 +121,27 @@ node bin/repository-norms.mjs layout ROOT [--rule RULE] [--warn]    # each varia
 node bin/repository-norms.mjs relocate ROOT --rule RULE             # dry run: what the fix would move and rewrite
 node bin/repository-norms.mjs relocate ROOT --rule RULE --apply     # move with git mv in each owning repository
 node bin/repository-norms.mjs relocate ROOT --rule RULE --apply --worktree   # plain renames: the index is not touched
-node bin/repository-norms.mjs forbidden ROOT [--apply]              # files named in layout.forbidden (NOTICE, LICENSE)
+node bin/repository-norms.mjs forbidden ROOT [--apply]              # paths matching a layout.forbidden.paths glob
 node bin/repository-norms.mjs manifests ROOT [--apply]              # a root package.json in a repository without Node.js source
 node bin/repository-norms.mjs readmes ROOT [--apply]                # a README.md alone among directories
+node bin/repository-norms.mjs remove-paths ROOT [--apply] < paths.jsonl   # removes the listed {"path": …} from the worktree; refuses a repository, a .git, anything outside ROOT
 node bin/repository-norms.mjs census ROOT                           # directory names per layout position, and candidate rules
+node bin/repository-norms.mjs mounts ROOT                           # mounts a mounts.rules row forbids, and repositories mounted twice
+node bin/repository-norms.mjs nesting ROOT                          # sections whose name does not specialise their parent's
+node bin/repository-norms.mjs subjects ROOT                         # files and directories named for a subject outside its owner
+node bin/repository-norms.mjs check-all ROOT [--class CLASS]...     # every rule class; exit 1 on any finding
+node bin/repository-norms.mjs check-staged REPOSITORY [--root ROOT] [--base REV] [--tree TREE]   # what one commit would newly violate
 ```
+
+- `check-all` prints each finding with its `class` (mounts, duplicate-mounts, nesting, subjects, forbidden, layout,
+  manifests, readmes, section-form) and the count per class on stderr. A class whose check cannot run is a finding.
+- `check-staged` reads only the paths a commit adds or modifies (the index against HEAD, or `--tree` against `--base`),
+  so standing violations do not block an unrelated commit and a commit that deletes or moves them away passes. It is
+  the gate of git-engine's commit pass: `commit-and-push-repositories ROOT --message M --norms bin/repository-norms.mjs`.
+- A forbidden row's `mode` is `remove` (`forbidden --apply` deletes it) or `refuse` (only reported, and refused at
+  commit). Mounts, nesting and subjects have no fix: their rows are the work list.
+- The tree walk, the path search, reference rewriting, whole-directory moves, placement from a section's name and the
+  section form are the filepath section's, the relocating-directory service's and the services-section engine's.
 
 - `layout` prints `rule`, `repository`, `found`, `canonical`, `files`, `canonicalExists` and `collisions` (files both
   directories hold with different content).

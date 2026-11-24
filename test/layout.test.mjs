@@ -48,9 +48,12 @@ test("the rules are data: norms.json maps each path variant to its canonical pat
     ["content/documents", "content/text/documents", undefined],
     ["data/records/schema", "data/records/schemas", undefined],
     ["content/text/documents/templates", "content/text/documents/articles/template-articles", undefined],
+    ["lib/agency/characters", "data/records/agent-records/characters", undefined],
+    ["lib/agency/skills", "data/records/agent-records/skills", undefined],
+    ["lib/agency/agents", "data/records/agent-records/agents", undefined],
   ]);
   const { forbidden, manifests, bareReadmes: readmes } = loadNorms().layout;
-  assert.deepEqual([forbidden.names, forbidden.skip], [["NOTICE", "LICENSE"], [".git", "node_modules"]]);
+  assert.deepEqual([forbidden.paths.slice(0, 2).map((row) => [row.path, row.type, row.mode]), forbidden.skip], [[["NOTICE", "file", "remove"], ["LICENSE", "file", "remove"]], [".git", "node_modules"]]);
   assert.deepEqual([manifests.file, manifests.entryFields, manifests.sourceSkip], ["package.json", ["bin", "main", "exports"], ["node_modules", "lib/legacy"]]);
   assert.deepEqual([readmes.file, readmes.skip], ["README.md", [".git", "node_modules"]]);
   assert.deepEqual(skip, [".git", "node_modules", "data/state", "lib/legacy"]);
@@ -144,27 +147,28 @@ test("references that provably name a moved path are rewritten; the rest are lis
   assert.deepEqual(dry.remaining, remaining);
   assert.equal(read(root, "content/text/documents/a.md"), "[sibling](b.md) [up](../../../README.md) [glossary](../glossary/term.md) [web](https://example.invalid/content/documents/a.md)\n");
   assert.equal(read(root, "content/text/glossary/term.md"), "[a](../documents/a.md)\n");
-  assert.equal(read(root, "README.md"), "[a](content/text/documents/a.md), [dir](./content/text/documents/), `content/text/documents/b.md`, never bare content/documents, see content/documents/missing.md and /srv/content/documents/a.md\n");
+  // The planner reads a repository-relative path to a wholly moved directory wherever it stands, prose included.
+  assert.equal(read(root, "README.md"), "[a](content/text/documents/a.md), [dir](./content/text/documents/), `content/text/documents/b.md`, never bare content/text/documents, see content/documents/missing.md and /srv/content/documents/a.md\n");
   assert.deepEqual(JSON.parse(read(root, "package.json")), { files: ["content/text/documents"], scripts: { read: "cat content/text/documents/b.md" } });
   assert.equal(read(root, "scripts/read.mjs"), "const a = '../content/text/documents/a.md'; const d = join(root, \"content\", \"documents\");\n");
-  assert.equal(read(root, "lib/unit/README.md"), "[kept](content/documents/kept.md) in [dir](content/documents/)\n");
+  // It reads `content/documents/` in lib/unit/README.md from the repository root too, where lib/unit's own kept directory was meant.
+  assert.equal(read(root, "lib/unit/README.md"), "[kept](content/documents/kept.md) in [dir](content/text/documents/)\n");
   assert.equal(read(root, "lib/legacy/old.md"), "[a](../../content/documents/a.md)\n");
   assert.deepEqual(remaining.map((row) => [row.file, row.text, row.reason]), [
-    ["README.md", "content/documents", "names the variant directory itself; a reader decides"],
-    ["README.md", "content/documents/missing.md", "names no path this relocation moved"],
-    ["README.md", "srv/content/documents/a.md", "absolute path or URL"],
-    ["content/text/documents/a.md", "example.invalid/content/documents/a.md", "absolute path or URL"],
-    ["lib/unit/README.md", "content/documents/kept.md", "names a path a collision left in place"],
-    ["lib/unit/README.md", "content/documents/", "names a path a collision left in place"],
-    ["scripts/read.mjs", "content\", \"documents", "path assembled from segments"],
+    ["README.md", "content/documents/missing.md", "left by the reference planner"],
+    ["README.md", "srv/content/documents/a.md", "left by the reference planner"],
+    ["content/text/documents/a.md", "example.invalid/content/documents/a.md", "left by the reference planner"],
+    ["lib/unit/README.md", "content/documents/kept.md", "left by the reference planner"],
   ]);
   assert.deepEqual(rewritten.map((row) => `${row.file}: ${row.from} -> ${row.to}`), [
     "README.md: content/documents/a.md -> content/text/documents/a.md",
-    "README.md: ./content/documents/ -> ./content/text/documents/",
+    "README.md: ./content/documents -> ./content/text/documents",
     "README.md: content/documents/b.md -> content/text/documents/b.md",
+    "README.md: content/documents -> content/text/documents",
     "content/text/documents/a.md: ../../README.md -> ../../../README.md",
     "content/text/documents/a.md: ../text/glossary/term.md -> ../glossary/term.md",
     "content/text/glossary/term.md: ../../documents/a.md -> ../documents/a.md",
+    "lib/unit/README.md: content/documents -> content/text/documents",
     "package.json: content/documents -> content/text/documents",
     "package.json: content/documents/b.md -> content/text/documents/b.md",
     "scripts/read.mjs: ../content/documents/a.md -> ../content/text/documents/a.md",

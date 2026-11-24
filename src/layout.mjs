@@ -1,4 +1,7 @@
 import { createGit } from "@red-cup-engineering/git-engine/git-process";
+import { walkPosixPathsSync } from "@red-cup-engineering/computer-filepath-engineering-services-section/walk-posix-paths";
+import { DATA_CUSTODY_KINDS } from "@red-cup-engineering/data-custody-directory-service";
+import { planMovedPathReferenceUpdates } from "@red-cup-engineering/service-section-engineering-services-section/plan-moved-path-reference-updates";
 /**
  * Directory layout norms over a tree of checked-out repositories. Every rule is a row of `norms.json` `layout.relocations`
  * (`from` is a path variant, `to` the canonical path, both relative to the same directory at any depth of a repository):
@@ -7,9 +10,14 @@ import { createGit } from "@red-cup-engineering/git-engine/git-process";
  *   rewrites the references that provably named a moved path;
  * - `censusLayout` counts directory names at the standard layout positions and proposes further rules.
  * Nothing here writes a file of its own: rows are returned to the caller.
+ * The tree walk is the filepath section's `walkPosixPathsSync`, the reference edits are the services-section engine's
+ * `planMovedPathReferenceUpdates`, a whole-directory move in the worktree is the relocating-directory service's, and
+ * the names `data/` may hold are the data-custody-directory service's.
  */
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadNorms } from "./naming.mjs";
 
 const under = (path, directory) => directory === "" || path === directory || path.startsWith(`${directory}/`);
@@ -22,27 +30,47 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 /** The layout norms with their defaults filled in. */
 export function layoutOf(norms = loadNorms()) {
   const { skip = [], positions = [], standard = {}, relocations = [] } = norms.layout ?? {};
-  return { skip, positions, standard, relocations };
+  // What `data/` may hold is the data-custody-directory service's to say, not a second list here.
+  return { skip, positions, standard: { ...standard, data: standard.data ?? [...DATA_CUSTODY_KINDS] }, relocations };
+}
+
+/**
+ * Walks `root` with the filepath section's `walkPosixPathsSync`, parents before children, calling `visit` with each
+ * entry outside the `skip` paths: `{ repository, path, below, name, kind, absolute, mounted }`. `repository` is the
+ * nearest enclosing directory holding `.git` (or `root`) and `path` the entry's path in it; `below` is its path below
+ * `root`; `mounted` says the entry is itself a repository. `skip` paths are matched against `below`, so a root inside a
+ * skipped directory is still walked. A directory is not entered when `visit` returns false. A path another process
+ * removes during the walk is passed over.
+ */
+export function walkEntries(root, { skip = [], visit }) {
+  const top = resolve(root);
+  const owners = new Map([[top, { repository: top, path: "" }]]);
+  const entered = new Set();
+  walkPosixPathsSync({
+    root: top, excludes: skip.filter((tail) => !tail.includes("/")), result: "paths", missing: "skip", unreadable: "skip", symlinks: "skip",
+    includeFile: () => false,
+    includeDirectory: ({ absolutePath }) => entered.has(absolutePath),
+    inspectEntry: ({ path: below, absolutePath: absolute, name, kind }) => {
+      if (skip.some((tail) => endsWithPath(below, tail))) return;
+      const owner = owners.get(dirname(absolute));
+      const path = owner.path ? `${owner.path}/${name}` : name;
+      const mounted = kind === "directory" && isRepository(absolute);
+      if (visit({ repository: owner.repository, path, below, name, kind, absolute, mounted }) === false || kind !== "directory") return;
+      owners.set(absolute, mounted ? { repository: absolute, path: "" } : { repository: owner.repository, path });
+      entered.add(absolute);
+    },
+  });
 }
 
 /**
  * Every directory under `root` that no `skip` path names, parents before children, as `{ repository, path, directory }`:
  * `repository` is the nearest enclosing directory holding `.git` (or `root`), `path` the directory relative to it.
- * `skip` paths are matched against the path below `root`, so a root inside a skipped directory is still walked.
  */
 export function* walkDirectories(root, { skip = [] } = {}) {
-  function* visit(directory, below, repository, path) {
-    yield { repository, path, directory };
-    for (const entry of entries(directory)) {
-      if (!entry.isDirectory()) continue;
-      const childBelow = below ? `${below}/${entry.name}` : entry.name;
-      if (skip.some((tail) => endsWithPath(childBelow, tail))) continue;
-      const child = join(directory, entry.name);
-      if (isRepository(child)) yield* visit(child, childBelow, child, "");
-      else yield* visit(child, childBelow, repository, path ? `${path}/${entry.name}` : entry.name);
-    }
-  }
-  yield* visit(resolve(root), "", resolve(root), "");
+  const top = resolve(root);
+  const found = [{ repository: top, path: "", directory: top }];
+  walkEntries(top, { skip, visit: ({ repository, path, kind, absolute, mounted }) => { if (kind === "directory") found.push(mounted ? { repository: absolute, path: "", directory: absolute } : { repository, path, directory: absolute }); } });
+  yield* found;
 }
 
 /** The files under `directory`, as paths relative to it, and whether a nested repository sits among them. */
@@ -117,88 +145,51 @@ function textFiles(repository, git, skip, patterns) {
   return output.split("\0").filter(Boolean).filter((file) => !file.split("/").some((_, i, parts) => skip.some((tail) => endsWithPath(parts.slice(0, i + 1).join("/"), tail))));
 }
 
-const MARKDOWN_LINK = /(\]\(\s*<?)([^)\s>#?]+)([^)]*\))/gu;
-const plainRelative = (target) => !/^(?:[a-z][a-z0-9+.-]*:|\/|#|~)/iu.test(target);
-
 /**
- * Rewrites the references `repository` holds to paths a relocation moved, and lists those it left.
- * - A markdown link is resolved from the file that holds it (from where that file stood before the move), and rewritten
- *   when it lands on a moved path, or when the holding file itself moved and the link climbs out of the moved directory.
- * - Any other mention of the variant path is rewritten when, read from one of the directories above the file, it names a
- *   file or subdirectory that moved. A mention of the variant directory itself is rewritten only in `package.json`:
- *   elsewhere it may be a statement about the variant (a rule, a scanner), which only a reader can tell.
- * `moved` maps old file path to new; `kept` are the files a collision left in place.
+ * Rewrites the references `repository` holds to paths a relocation moved, and lists the mentions of the variant path
+ * that are left. The edits are the services-section engine's `planMovedPathReferenceUpdates`: repository-relative and
+ * file-relative paths to a moved file or a wholly moved directory, and in a moved file its relative paths to files that
+ * stayed. When the planner holds its plan (a bare directory name it cannot tell from a word) nothing is rewritten.
+ * `moved` maps old file path to new; a directory a collision left a file in did not wholly move, so it is not rewritten.
  */
-function rewriteReferences(repository, entry, { moved, kept, apply, git, skip }) {
-  const rewritten = [], remaining = [];
+function rewriteReferences(repository, entry, { moved, apply, git, skip }) {
   const oldOf = new Map([...moved].map(([from, to]) => [to, from]));
-  const movedDirectory = (path) => !kept.some((file) => under(file, path)) && [...moved.keys()].some((file) => under(file, path) && file !== path);
-  const relocated = (path) => {
-    if (moved.has(path)) return moved.get(path);
-    if (!movedDirectory(path)) return null;
-    const sample = [...moved.keys()].find((file) => under(file, path));
-    return `${moved.get(sample).slice(0, moved.get(sample).length - (sample.length - path.length))}`;
+  const text = (file) => {
+    const found = lstatSync(join(repository, file), { throwIfNoEntry: false });
+    if (!found?.isFile()) return null;
+    const bytes = readFileSync(join(repository, file));
+    return bytes.includes(0) ? null : bytes.toString("utf8");
   };
-  const standing = (path) => (apply ? existsSync(join(repository, path)) : existsSync(join(repository, path)) && !moved.has(path));
-  const token = new RegExp(`(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_.@-]+/)*)${escapeRegExp(entry.from)}(?![A-Za-z0-9_-])((?:/[A-Za-z0-9_.@%-]+)*)(/?)`, "gu");
-  const segments = entry.from.split("/").map(escapeRegExp);
-  const assembled = new RegExp(segments.join(`["'\`]\\s*,\\s*["'\`]`), "u");
-  const patterns = [escapeRegExp(entry.from), segments.join(`["'\`][[:space:]]*,[[:space:]]*["'\`]`), "\\]\\("];
-  for (const file of textFiles(repository, git, skip, patterns)) {
-    const before = apply ? (oldOf.get(file) ?? file) : file;
-    const now = apply ? file : (moved.get(file) ?? file);
-    const here = posix.dirname(before) === "." ? "" : posix.dirname(before);
-    const from = (base, path) => { const joined = posix.normalize(posix.join(base, path)); return joined.startsWith("..") ? null : joined.replace(/\/$/u, ""); };
-    const absolute = join(repository, file);
-    if (lstatSync(absolute).isSymbolicLink()) continue;
-    const lines = readFileSync(absolute, "utf8").split("\n");
-    let changed = false;
-    lines.forEach((line, index) => {
-      const note = (list, row) => list.push({ file: now, line: index + 1, ...row });
-      let next = line;
-      if (/\.(?:md|markdown|mdx)$/iu.test(file)) {
-        next = next.replace(MARKDOWN_LINK, (whole, open, target, close) => {
-          if (!plainRelative(target)) return whole;
-          let decoded; try { decoded = decodeURI(target); } catch { return whole; }
-          const aimed = from(here, decoded);
-          if (aimed === null || aimed === "") return whole;
-          const landed = relocated(aimed) ?? aimed;
-          if (landed === aimed && now === before) return whole;
-          if (landed === aimed && !standing(aimed)) return whole;
-          const link = posix.relative(posix.dirname(now) === "." ? "" : posix.dirname(now), landed) || ".";
-          const written = encodeURI(`${target.startsWith("./") && !link.startsWith(".") ? "./" : ""}${link}${target.endsWith("/") ? "/" : ""}`);
-          if (written === target) return whole;
-          note(rewritten, { from: target, to: written });
-          return `${open}${written}${close}`;
-        });
-      }
-      const edits = [];
-      for (const match of next.matchAll(token)) {
-        const [whole, prefix, suffix, slash] = match;
-        if (/[:/~]$/u.test(next.slice(0, match.index))) { note(remaining, { text: whole, reason: "absolute path or URL" }); continue; }
-        const path = `${prefix}${entry.from}${suffix}`;
-        const bases = here.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/")).concat(here === "" ? [] : [""]);
-        // Read from each directory above the file; the mention is rewritten only when exactly one reading names a relocated path.
-        const readings = [...new Set(bases.map((base) => from(base, path)).filter((aimed) => aimed !== null && aimed !== ""))];
-        const left = readings.filter((aimed) => kept.some((file_) => under(file_, aimed)));
-        const hits = readings.filter((aimed) => relocated(aimed));
-        if (hits.length !== 1 || left.length) {
-          note(remaining, { text: whole, reason: left.length ? "names a path a collision left in place" : hits.length > 1 ? "names more than one moved path" : "names no path this relocation moved" });
-          continue;
-        }
-        if (suffix === "" && posix.basename(file) !== "package.json") { note(remaining, { text: whole, reason: "names the variant directory itself; a reader decides" }); continue; }
-        if (now !== before && prefix.startsWith("..")) { note(remaining, { text: whole, reason: "relative path in a file that moved" }); continue; }
-        const written = `${prefix}${entry.to}${suffix}${slash}`;
-        edits.push({ index: match.index, length: whole.length, written });
-        note(rewritten, { from: whole, to: written });
-      }
-      for (const edit of edits.reverse()) next = `${next.slice(0, edit.index)}${edit.written}${next.slice(edit.index + edit.length)}`;
-      if (assembled.test(next)) note(remaining, { text: assembled.exec(next)[0], reason: "path assembled from segments" });
-      if (next !== line) { lines[index] = next; changed = true; }
-    });
-    if (changed && apply) writeFileSync(absolute, lines.join("\n"));
+  // The files as they stand now; before `apply` a moved file is read where it still is and planned where it will be.
+  const standing = git(repository, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]).split("\0").filter((file) => file && lstatSync(join(repository, file), { throwIfNoEntry: false }));
+  const tracked = [...new Set(standing.map((file) => (apply ? oldOf.get(file) ?? file : file)))];
+  // Any text file may hold a path relative to itself, so each one outside the skipped paths is handed to the planner.
+  const candidates = new Set(textFiles(repository, git, skip, ["^"]));
+  const files = [...candidates].sort().flatMap((file) => { const read = text(file); return read === null ? [] : [{ at: file, path: apply ? file : moved.get(file) ?? file, text: read }]; });
+  const rewritten = [], remaining = [];
+  let planned = [];
+  try {
+    planned = planMovedPathReferenceUpdates({ tracked, moves: [...moved].map(([from, to]) => ({ from, to })), files: files.map(({ path, text: read }) => ({ path, text: read })) });
+  } catch (error) {
+    if (error.code !== "ERR_AMBIGUOUS_DIRECTORY_REFERENCE") throw error;
+    remaining.push({ file: error.path, text: error.reference, reason: "the reference planner held its plan: a bare directory name may not be a path" });
+  }
+  const after = new Map(planned.map((plan) => [plan.path, plan]));
+  const mention = new RegExp(`(?<![A-Za-z0-9_-])(?:[A-Za-z0-9_.@-]+/)*${escapeRegExp(entry.from)}(?![A-Za-z0-9_-])(?:/[A-Za-z0-9_.@%-]+)*/?`, "gu");
+  for (const file of files) {
+    const plan = after.get(file.path);
+    for (const update of plan?.updates ?? []) rewritten.push({ file: file.path, from: update.from, to: update.to, count: update.count });
+    if (plan && apply) writeFileSync(join(repository, file.at), plan.text);
+    (plan?.text ?? file.text).split("\n").forEach((line, index) => { for (const [found] of line.matchAll(mention)) remaining.push({ file: file.path, line: index + 1, text: found, reason: "left by the reference planner" }); });
   }
   return { rewritten, remaining };
+}
+
+/** Moves a whole directory with the relocating-directory service: one rename, never a merge or an overwrite. */
+function relocateWholeDirectory(source, destination) {
+  const service = fileURLToPath(import.meta.resolve("@red-cup-engineering/relocating-directory-service"));
+  const run = spawnSync(process.execPath, [service, "--source", source, "--destination", destination, "--apply"], { encoding: "utf8" });
+  if (run.status !== 0) throw new Error((run.stderr || run.error?.message || `relocate-directory exited ${run.status}`).trim());
 }
 
 /**
@@ -225,7 +216,10 @@ export function* relocate(root, { rule, apply = false, worktree = false, norms =
     if (apply) {
       const tracked = new Set(worktree ? [] : git(repository, ["ls-files", "-z", "--", found]).split("\0").filter(Boolean));
       const attempt = (file, act) => { try { act(); return true; } catch (error) { failed.push({ file, error: String(error.message ?? error).split("\n")[0] }); return false; } };
-      for (const { from, to } of plan.move) {
+      // Nothing stands at the canonical path: with `worktree` the directory moves whole, by the relocating-directory service.
+      const whole = worktree && !plan.canonicalExists && plan.move.length > 0 && attempt(found, () => relocateWholeDirectory(join(repository, found), join(repository, row.canonical)));
+      if (whole) for (const { from, to } of plan.move) state.moved.set(from, to);
+      for (const { from, to } of whole ? [] : plan.move) {
         if (!worktree && !tracked.has(from)) untracked += 1;
         const done = attempt(from, () => {
           mkdirSync(dirname(join(repository, to)), { recursive: true });
@@ -259,7 +253,7 @@ export function* relocate(root, { rule, apply = false, worktree = false, norms =
   }
   for (const [repository, { moved, kept }] of changed) {
     if (moved.size === 0) continue;
-    yield { kind: "references", rule, repository, outcome: apply ? "rewritten" : "would rewrite", ...rewriteReferences(repository, entry, { moved, kept, apply, git, skip }) };
+    yield { kind: "references", rule, repository, outcome: apply ? "rewritten" : "would rewrite", ...rewriteReferences(repository, entry, { moved, apply, git, skip }) };
   }
 }
 

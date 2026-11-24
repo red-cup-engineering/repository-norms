@@ -9,7 +9,13 @@ import { execGitSync } from "@red-cup-engineering/git-engine/git-process";
  * repository-norms forbidden [ROOT] [--apply]               every file whose name is forbidden; --apply removes them (JSON lines)
  * repository-norms manifests [ROOT] [--apply]               every root manifest without Node.js source; --apply removes them (JSON lines)
  * repository-norms readmes [ROOT] [--apply]                 every README alone among directories; --apply removes them (JSON lines)
+ * repository-norms remove-paths [ROOT] [--apply]            removes the paths listed on stdin as JSON lines {"path": …} relative to ROOT, from the worktree only (JSON lines)
  * repository-norms census [ROOT]                          directory names at the layout positions, and candidate rules (JSON lines)
+ * repository-norms mounts [ROOT]                            every submodule mounted where a mount rule forbids it, or mounted twice (JSON lines)
+ * repository-norms nesting [ROOT]                           every mounted section whose name does not specialise its parent's (JSON lines)
+ * repository-norms subjects [ROOT]                          every file or directory named for a subject outside its owning section (JSON lines)
+ * repository-norms check-all [ROOT] [--class CLASS]...      every rule class over the tree; exit 1 on any finding (JSON lines)
+ * repository-norms check-staged [REPOSITORY] [--root ROOT] [--base REV] [--tree TREE]   what one commit would newly violate; exit 1 on any finding (JSON lines)
  */
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -18,8 +24,10 @@ import { checkSubmodules } from "../src/submodules.mjs";
 import { assessFrontdoor } from "../src/frontdoor.mjs";
 import { censusLayout, relocate, reportLayout } from "../src/layout.mjs";
 import { bareReadmes, forbiddenFiles, sourcelessManifests } from "../src/removals.mjs";
+import { readFileSync } from "node:fs";
+import { checkAll, checkMounts, checkNesting, checkStaged, checkSubjects, removePaths } from "../src/rules.mjs";
 
-const { values, positionals } = parseArgs({ allowPositionals: true, options: { org: { type: "string", multiple: true }, warn: { type: "boolean", default: false }, json: { type: "boolean", default: false }, rule: { type: "string" }, apply: { type: "boolean", default: false }, worktree: { type: "boolean", default: false } } });
+const { values, positionals } = parseArgs({ allowPositionals: true, options: { org: { type: "string", multiple: true }, warn: { type: "boolean", default: false }, json: { type: "boolean", default: false }, rule: { type: "string" }, apply: { type: "boolean", default: false }, worktree: { type: "boolean", default: false }, root: { type: "string" }, base: { type: "string" }, tree: { type: "string" }, class: { type: "string", multiple: true } } });
 const [command = "check", dir = "."] = positionals;
 const norms = loadNorms();
 const line = (row) => process.stdout.write(`${JSON.stringify(row)}\n`);
@@ -74,7 +82,19 @@ if (command === "check") {
   const counts = {};
   for (const row of ({ forbidden: forbiddenFiles, manifests: sourcelessManifests, readmes: bareReadmes })[command](dir, { apply: values.apply, norms })) { line(row); counts[row.outcome] = (counts[row.outcome] ?? 0) + 1; }
   process.stderr.write(`${JSON.stringify(counts)}\n`);
-  if (counts.failed || (!values.apply && !values.warn && counts["would remove"])) process.exitCode = 1;
+  if (counts.failed || (!values.warn && (counts.refused || (!values.apply && counts["would remove"])))) process.exitCode = 1;
+} else if (command === "mounts" || command === "nesting" || command === "subjects" || command === "check-all" || command === "check-staged") {
+  const counts = {};
+  const rows = command === "mounts" ? checkMounts(dir, { norms }) : command === "nesting" ? checkNesting(dir, { norms }) : command === "subjects" ? checkSubjects(dir, { norms }) : command === "check-all" ? checkAll(dir, { only: values.class, norms }) : checkStaged(dir, { root: values.root, base: values.base, tree: values.tree, norms });
+  for await (const row of rows) { line(row); const key = row.class ?? command; counts[key] = (counts[key] ?? 0) + 1; }
+  process.stderr.write(`${JSON.stringify(counts)}\n`);
+  if (Object.keys(counts).length > 0 && !values.warn) process.exitCode = 1;
+} else if (command === "remove-paths") {
+  const counts = {};
+  const entries = readFileSync(0, "utf8").split("\n").filter((text) => text.trim() !== "").map((text) => { try { return JSON.parse(text); } catch { return null; } });
+  for await (const row of removePaths(dir, entries, { apply: values.apply })) { line(row); counts[row.outcome] = (counts[row.outcome] ?? 0) + 1; }
+  process.stderr.write(`${JSON.stringify(counts)}\n`);
+  if (counts.failed || counts.refused) process.exitCode = 1;
 } else if (command === "census") {
   for (const row of censusLayout(dir, { norms })) line(row);
 } else if (command === "estate") {
@@ -87,6 +107,6 @@ if (command === "check") {
     }
   }
 } else {
-  process.stderr.write("usage: repository-norms check [DIR] [--warn] | frontdoor [DIR] [--json] [--warn] | layout [ROOT] [--rule RULE] [--warn] | relocate [ROOT] --rule RULE [--apply [--worktree]] | forbidden [ROOT] [--apply] | manifests [ROOT] [--apply] | readmes [ROOT] [--apply] | census [ROOT] | estate --org ORG [--org ORG]...\n");
+  process.stderr.write("usage: repository-norms check [DIR] [--warn] | frontdoor [DIR] [--json] [--warn] | layout [ROOT] [--rule RULE] [--warn] | relocate [ROOT] --rule RULE [--apply [--worktree]] | forbidden [ROOT] [--apply] | manifests [ROOT] [--apply] | readmes [ROOT] [--apply] | remove-paths [ROOT] [--apply] | census [ROOT] | mounts [ROOT] | nesting [ROOT] | subjects [ROOT] | check-all [ROOT] [--class CLASS]... | check-staged [REPOSITORY] [--root ROOT] [--base REV] [--tree TREE] | estate --org ORG [--org ORG]...\n");
   process.exitCode = 2;
 }

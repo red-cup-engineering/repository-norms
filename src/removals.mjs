@@ -1,6 +1,6 @@
 /**
  * Removal norms over a tree of checked-out repositories, each one data in `norms.json` `layout`:
- * - `forbidden`: file names no repository holds, at any depth;
+ * - `forbidden`: path globs no repository holds, at any depth (the walk is in rules.mjs);
  * - `manifests`: a repository that offers no Node.js source holds no package manifest at its root;
  * - `bareReadmes`: a directory holding only directories and a README holds no README.
  * Each reports, and with `apply` removes from the worktree only: no git command runs, nothing is staged, and the only
@@ -10,22 +10,15 @@ import { lstatSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 
 import { extname, join } from "node:path";
 import { layoutOf, walkDirectories } from "./layout.mjs";
 import { loadNorms } from "./naming.mjs";
+// rules.mjs imports this module for the manifest and README checks, so its namespace is read when called.
+import * as rules from "./rules.mjs";
 
 const stat = (path) => lstatSync(path, { throwIfNoEntry: false });
 const remove = (path) => { try { unlinkSync(path); return null; } catch (error) { return String(error.message ?? error).split("\n")[0]; } };
 
-/** Every file under `root` whose name `layout.forbidden.names` lists, outside the `layout.forbidden.skip` paths. */
-export function* forbiddenFiles(root, { apply = false, norms = loadNorms() } = {}) {
-  const { names = [], skip = [] } = norms.layout?.forbidden ?? {};
-  for (const { repository, path, directory } of walkDirectories(root, { skip })) {
-    for (const name of names) {
-      const found = stat(join(directory, name));
-      if (!found || found.isDirectory()) continue;
-      const row = { kind: "forbidden", repository, file: path ? `${path}/${name}` : name };
-      const error = apply ? remove(join(directory, name)) : null;
-      yield { ...row, outcome: !apply ? "would remove" : error ? "failed" : "removed", ...(error ? { error } : {}) };
-    }
-  }
+/** Every forbidden file or directory under `root`: `checkForbidden` of rules.mjs, kept here under its first name. */
+export function* forbiddenFiles(root, options = {}) {
+  yield* rules.checkForbidden(root, options);
 }
 
 const leaves = (value) => (typeof value === "string" ? [value] : value && typeof value === "object" ? Object.values(value).flatMap(leaves) : []);
