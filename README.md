@@ -120,6 +120,10 @@ These three walk ROOT through every checked-out repository below it, skipping `.
 node bin/repository-norms.mjs layout ROOT [--rule RULE] [--warn]    # each variant directory; exit 1 on findings
 node bin/repository-norms.mjs relocate ROOT --rule RULE             # dry run: what the fix would move and rewrite
 node bin/repository-norms.mjs relocate ROOT --rule RULE --apply     # move with git mv in each owning repository
+node bin/repository-norms.mjs relocate ROOT --rule RULE --apply --worktree   # plain renames: the index is not touched
+node bin/repository-norms.mjs forbidden ROOT [--apply]              # files named in layout.forbidden (NOTICE, LICENSE)
+node bin/repository-norms.mjs manifests ROOT [--apply]              # a root package.json in a repository without Node.js source
+node bin/repository-norms.mjs readmes ROOT [--apply]                # a README.md alone among directories
 node bin/repository-norms.mjs census ROOT                           # directory names per layout position, and candidate rules
 ```
 
@@ -130,6 +134,9 @@ node bin/repository-norms.mjs census ROOT                           # directory 
   rewrites references inside the same repository: markdown links that resolve to a moved path, links in moved files
   that climb out of the moved directory, and other mentions that name a moved file. Every mention it leaves is listed
   in `remaining` with the reason. It stages moves and commits nothing.
+- `forbidden`, `manifests` and `readmes` are dry runs until `--apply`, which removes from the worktree only and runs no
+  git command. `manifests` also removes the `.npmrc` and lockfile beside a removed manifest and deletes the dependency
+  entry from each manifest that named it. Run them in that order: each can leave the next more to find.
 - `census` counts directory names under each `layout.positions` path of each repository root (`name` rows), then
   proposes rules (`candidate` rows): singular and plural forms, hyphen, underscore or case differences, and one name at
   two depths. The proposed canonical is the ruling in `norms.json` when there is one, otherwise the seat

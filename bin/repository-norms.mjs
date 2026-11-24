@@ -5,7 +5,10 @@ import { execGitSync } from "@red-cup-engineering/git-engine/git-process";
  * repository-norms estate --org ORG [...]    every non-archived repository name of the organizations (JSON lines)
  * repository-norms frontdoor [DIR] [--json] [--warn]    evidence-bound README entry-page observations
  * repository-norms layout [ROOT] [--rule RULE] [--warn]   every directory a layout rule relocates, under ROOT (JSON lines)
- * repository-norms relocate [ROOT] --rule RULE [--apply]  move one rule's directories onto their canonical paths (JSON lines)
+ * repository-norms relocate [ROOT] --rule RULE [--apply [--worktree]]  move one rule's directories onto their canonical paths (JSON lines)
+ * repository-norms forbidden [ROOT] [--apply]               every file whose name is forbidden; --apply removes them (JSON lines)
+ * repository-norms manifests [ROOT] [--apply]               every root manifest without Node.js source; --apply removes them (JSON lines)
+ * repository-norms readmes [ROOT] [--apply]                 every README alone among directories; --apply removes them (JSON lines)
  * repository-norms census [ROOT]                          directory names at the layout positions, and candidate rules (JSON lines)
  */
 import { execFileSync } from "node:child_process";
@@ -14,8 +17,9 @@ import { classifyName, loadNorms } from "../src/naming.mjs";
 import { checkSubmodules } from "../src/submodules.mjs";
 import { assessFrontdoor } from "../src/frontdoor.mjs";
 import { censusLayout, relocate, reportLayout } from "../src/layout.mjs";
+import { bareReadmes, forbiddenFiles, sourcelessManifests } from "../src/removals.mjs";
 
-const { values, positionals } = parseArgs({ allowPositionals: true, options: { org: { type: "string", multiple: true }, warn: { type: "boolean", default: false }, json: { type: "boolean", default: false }, rule: { type: "string" }, apply: { type: "boolean", default: false } } });
+const { values, positionals } = parseArgs({ allowPositionals: true, options: { org: { type: "string", multiple: true }, warn: { type: "boolean", default: false }, json: { type: "boolean", default: false }, rule: { type: "string" }, apply: { type: "boolean", default: false }, worktree: { type: "boolean", default: false } } });
 const [command = "check", dir = "."] = positionals;
 const norms = loadNorms();
 const line = (row) => process.stdout.write(`${JSON.stringify(row)}\n`);
@@ -59,13 +63,18 @@ if (command === "check") {
 } else if (command === "relocate") {
   if (!values.rule) { process.stderr.write("relocate needs --rule RULE\n"); process.exit(2); }
   const counts = {};
-  for (const row of relocate(dir, { rule: values.rule, apply: values.apply, norms })) {
+  for (const row of relocate(dir, { rule: values.rule, apply: values.apply, worktree: values.worktree, norms })) {
     line(row);
     if (row.kind === "relocation") for (const [key, n] of [[row.outcome, 1], ["files moved", row.moved ?? 0], ["files dropped as identical", row.dropped ?? 0], ["files kept on collision", row.kept?.length ?? 0], ["files failed", row.failed?.length ?? 0]]) counts[key] = (counts[key] ?? 0) + n;
     else for (const key of ["rewritten", "remaining"]) counts[`references ${key}`] = (counts[`references ${key}`] ?? 0) + row[key].length;
   }
   process.stderr.write(`${JSON.stringify(counts)}\n`);
   if (counts["files failed"]) process.exitCode = 1;
+} else if (command === "forbidden" || command === "manifests" || command === "readmes") {
+  const counts = {};
+  for (const row of ({ forbidden: forbiddenFiles, manifests: sourcelessManifests, readmes: bareReadmes })[command](dir, { apply: values.apply, norms })) { line(row); counts[row.outcome] = (counts[row.outcome] ?? 0) + 1; }
+  process.stderr.write(`${JSON.stringify(counts)}\n`);
+  if (counts.failed || (!values.apply && !values.warn && counts["would remove"])) process.exitCode = 1;
 } else if (command === "census") {
   for (const row of censusLayout(dir, { norms })) line(row);
 } else if (command === "estate") {
@@ -78,6 +87,6 @@ if (command === "check") {
     }
   }
 } else {
-  process.stderr.write("usage: repository-norms check [DIR] [--warn] | frontdoor [DIR] [--json] [--warn] | layout [ROOT] [--rule RULE] [--warn] | relocate [ROOT] --rule RULE [--apply] | census [ROOT] | estate --org ORG [--org ORG]...\n");
+  process.stderr.write("usage: repository-norms check [DIR] [--warn] | frontdoor [DIR] [--json] [--warn] | layout [ROOT] [--rule RULE] [--warn] | relocate [ROOT] --rule RULE [--apply [--worktree]] | forbidden [ROOT] [--apply] | manifests [ROOT] [--apply] | readmes [ROOT] [--apply] | census [ROOT] | estate --org ORG [--org ORG]...\n");
   process.exitCode = 2;
 }

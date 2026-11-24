@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { censusLayout, relocate, reportLayout } from "../src/layout.mjs";
 import { loadNorms } from "../src/naming.mjs";
+import { bareReadmes, forbiddenFiles, sourcelessManifests } from "../src/removals.mjs";
 
 Object.assign(process.env, { GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.invalid" });
 const scratch = new URL("../data/state/temporary-state/", import.meta.url).pathname;
@@ -43,9 +44,15 @@ const status = (directory) => git(directory, "status", "--porcelain", "--ignore-
 test("the rules are data: norms.json maps each path variant to its canonical path", () => {
   const { relocations, skip, positions } = loadNorms().layout;
   assert.deepEqual(relocations.find((entry) => entry.rule === RULE), { ...relocations.find((entry) => entry.rule === RULE), from: "content/documents", to: "content/text/documents" });
-  const held = relocations.find((entry) => entry.from === "data/records/schema");
-  assert.equal(held.to, "data/records/schemas");
-  assert.ok(held.hold);
+  assert.deepEqual(relocations.map((entry) => [entry.from, entry.to, entry.hold]), [
+    ["content/documents", "content/text/documents", undefined],
+    ["data/records/schema", "data/records/schemas", undefined],
+    ["content/text/documents/templates", "content/text/documents/articles/template-articles", undefined],
+  ]);
+  const { forbidden, manifests, bareReadmes: readmes } = loadNorms().layout;
+  assert.deepEqual([forbidden.names, forbidden.skip], [["NOTICE", "LICENSE"], [".git", "node_modules"]]);
+  assert.deepEqual([manifests.file, manifests.entryFields, manifests.sourceSkip], ["package.json", ["bin", "main", "exports"], ["node_modules", "lib/legacy"]]);
+  assert.deepEqual([readmes.file, readmes.skip], ["README.md", [".git", "node_modules"]]);
   assert.deepEqual(skip, [".git", "node_modules", "data/state", "lib/legacy"]);
   assert.ok(positions.includes("") && positions.includes("content/text/documents"));
 });
@@ -59,6 +66,7 @@ test("the check finds each variant directory in the repository that owns it, at 
       "data/state/content/documents/scratch.md": "scratch\n",
       "node_modules/x/content/documents/dep.md": "dep\n",
       "data/records/schema/s.json": "{}\n",
+      "content/text/documents/templates/t.md": "t\n",
     },
     child: {
       "content/documents/same.md": "same\n",
@@ -70,8 +78,9 @@ test("the check finds each variant directory in the repository that owns it, at 
   });
   const found = [...reportLayout(root)];
   assert.deepEqual(found, [
-    { rule: RULE, repository: root, found: "content/documents", canonical: "content/text/documents", files: 1, canonicalExists: false, collisions: 0 },
-    { rule: "schemas-under-data-records", repository: root, found: "data/records/schema", canonical: "data/records/schemas", files: 1, canonicalExists: false, collisions: 0, hold: "ruled but not yet ordered applied" },
+    { rule: RULE, repository: root, found: "content/documents", canonical: "content/text/documents", files: 1, canonicalExists: true, collisions: 0 },
+    { rule: "templates-under-template-articles", repository: root, found: "content/text/documents/templates", canonical: "content/text/documents/articles/template-articles", files: 1, canonicalExists: false, collisions: 0 },
+    { rule: "schemas-under-data-records", repository: root, found: "data/records/schema", canonical: "data/records/schemas", files: 1, canonicalExists: false, collisions: 0 },
     { rule: RULE, repository: root, found: "lib/unit/content/documents", canonical: "lib/unit/content/text/documents", files: 1, canonicalExists: false, collisions: 0 },
     { rule: RULE, repository: child, found: "content/documents", canonical: "content/text/documents", files: 3, canonicalExists: true, collisions: 1 },
   ]);
@@ -164,7 +173,10 @@ test("references that provably name a moved path are rewritten; the rest are lis
 
 test("the fix refuses a held rule, an unknown rule, and a variant directory that holds a repository", (t) => {
   const { root } = forest(t, { parent: { "data/records/schema/s.json": "{}\n" }, child: {} });
-  assert.throws(() => rows(root, { rule: "schemas-under-data-records", apply: true }), /is held/u);
+  const norms = loadNorms();
+  norms.layout.relocations.find((entry) => entry.rule === "schemas-under-data-records").hold = "not yet ordered applied";
+  assert.throws(() => rows(root, { rule: "schemas-under-data-records", apply: true, norms }), /is held/u);
+  assert.deepEqual([...reportLayout(root, { norms })].map((row) => row.hold), ["not yet ordered applied"]);
   assert.throws(() => rows(root, { rule: "no-such-rule" }), /no layout rule named/u);
   assert.equal(existsSync(join(root, "data/records/schema/s.json")), true);
   mkdirSync(join(root, "content/documents/nested"), { recursive: true });
@@ -205,11 +217,108 @@ test("the census counts directory names at each layout position and proposes a c
   assert.deepEqual(candidates["content/glossary"], { kind: "candidate", variant: "content/glossary", canonical: "content/text/glossary", reasons: ["same name at two depths"], repositories: 1, files: 1, canonicalRepositories: 2, canonicalFiles: 3, basis: "the services section form seats it there" });
   assert.deepEqual([candidates.schemas.canonical, candidates.schemas.reasons, candidates.schemas.canonicalRepositories], ["data/records/schemas", ["same name at two depths"], 0]);
   assert.deepEqual([candidates["data/records/service_records"].canonical, candidates["data/records/service_records"].reasons], ["data/records/service-records", ["hyphen, underscore or case"]]);
-  // A ruling in norms.json wins over everything, and says when it is held.
-  assert.deepEqual([candidates["data/records/schema"].canonical, candidates["data/records/schema"].reasons, candidates["data/records/schema"].basis], ["data/records/schemas", ["singular and plural"], "ruled: schemas-under-data-records (held)"]);
+  // A ruling in norms.json wins over everything.
+  assert.deepEqual([candidates["data/records/schema"].canonical, candidates["data/records/schema"].reasons, candidates["data/records/schema"].basis], ["data/records/schemas", ["singular and plural"], "ruled: schemas-under-data-records"]);
   // Where nothing is stated, the form more repositories (then more files) use is proposed.
   assert.deepEqual([candidates["data/records/requirement-records"].canonical, candidates["data/records/requirement-records"].reasons, candidates["data/records/requirement-records"].basis], ["data/records/requirements-records", ["singular and plural"], "more repositories use it"]);
   assert.deepEqual([candidates["content/world"].canonical, candidates["content/world"].basis], ["world", "more repositories use it"]);
   assert.deepEqual(census.at(-1), { kind: "summary", repositories: 2, positions: loadNorms().layout.positions, candidates: 6 });
   assert.deepEqual(status(root), []);
+});
+
+test("with --worktree the fix renames and unlinks without touching the index", (t) => {
+  const { root, child } = forest(t, {
+    parent: { "data/records/schema/s.json": "{}\n", "content/text/documents/templates/t.md": "t\n", "README.md": "[t](content/text/documents/templates/t.md)\n" },
+    child: { "content/documents/same.md": "same\n", "content/documents/only.md": "only\n", "content/text/documents/same.md": "same\n" },
+  });
+  const moved = (rule) => rows(root, { rule, apply: true, worktree: true }).filter((row) => row.kind === "relocation").map((row) => [row.outcome, row.moved, row.dropped, row.untracked ?? 0]);
+  assert.deepEqual(moved(RULE), [["moved", 1, 1, 0]]);
+  assert.deepEqual(moved("schemas-under-data-records"), [["moved", 1, 0, 0]]);
+  assert.deepEqual(moved("templates-under-template-articles"), [["moved", 1, 0, 0]]);
+  assert.equal(read(root, "content/text/documents/articles/template-articles/t.md"), "t\n");
+  assert.equal(read(root, "README.md"), "[t](content/text/documents/articles/template-articles/t.md)\n");
+  assert.equal(existsSync(join(child, "content/documents")), false);
+  // Nothing is staged: the index still names the old paths.
+  assert.deepEqual(status(child), ["?? content/text/documents/only.md", "D content/documents/only.md", "D content/documents/same.md"]);
+  assert.deepEqual(status(root), ["?? content/text/documents/articles/", "?? data/records/schemas/", "D content/text/documents/templates/t.md", "D data/records/schema/s.json", "M README.md"]);
+  assert.equal(git(root, "diff", "--cached", "--name-only", "--ignore-submodules=all"), "");
+  assert.deepEqual([...reportLayout(root)], []);
+});
+
+test("forbidden file names are reported, then removed from the worktree at any depth, legacy included", (t) => {
+  const { root, child } = forest(t, {
+    parent: { LICENSE: "l\n", "lib/legacy/old/NOTICE": "n\n", "node_modules/x/LICENSE": "dep\n", "LICENSE.md": "kept\n", "content/LICENSE/inside.md": "a directory\n" },
+    child: { NOTICE: "n\n", "lib/unit/LICENSE": "l\n" },
+  });
+  const files = (apply) => [...forbiddenFiles(root, { apply })].map((row) => [row.repository === child ? "child" : "parent", row.file, row.outcome]);
+  assert.deepEqual(files(false), [["parent", "LICENSE", "would remove"], ["parent", "lib/legacy/old/NOTICE", "would remove"], ["child", "NOTICE", "would remove"], ["child", "lib/unit/LICENSE", "would remove"]]);
+  assert.deepEqual(status(root), []);
+  assert.deepEqual(files(true).map((row) => row[2]), ["removed", "removed", "removed", "removed"]);
+  assert.deepEqual(files(false), []);
+  assert.equal(read(root, "node_modules/x/LICENSE"), "dep\n");
+  assert.equal(read(root, "LICENSE.md"), "kept\n");
+  assert.equal(read(root, "content/LICENSE/inside.md"), "a directory\n");
+  assert.deepEqual(status(root), ["D LICENSE", "D lib/legacy/old/NOTICE"]);
+  assert.deepEqual(status(child), ["D NOTICE", "D lib/unit/LICENSE"]);
+});
+
+test("a root manifest without Node.js source is removed with what stood beside it, and its dependents are released", (t) => {
+  const manifest = (fields) => `${JSON.stringify({ version: "0.1.0", ...fields }, null, 2)}\n`;
+  const { root, child } = forest(t, {
+    parent: {
+      "package.json": manifest({ name: "@x/parent", dependencies: { "@x/child": "workspace:*", "@x/other": "^1.0.0" }, devDependencies: { "@x/child": "workspace:*" } }),
+      "src/index.mjs": "export {};\n",
+      "lib/unit/package.json": manifest({ name: "@x/unit" }),
+    },
+    child: {
+      "package.json": manifest({ name: "@x/child", main: "./missing.mjs", exports: { ".": "./also-missing.mjs" } }),
+      ".npmrc": "x\n", "package-lock.json": "{}\n", "README.md": "child\n",
+      "lib/legacy/old.js": "legacy\n", "node_modules/x/index.js": "dep\n",
+    },
+  });
+  assert.deepEqual([...sourcelessManifests(root)], [{ kind: "manifest", repository: child, name: "@x/child", outcome: "would remove", beside: [".npmrc", "package-lock.json"], dependents: [join(root, "package.json")] }]);
+  assert.deepEqual(status(root), []);
+  assert.deepEqual([...sourcelessManifests(root, { apply: true })].map((row) => row.outcome), ["removed"]);
+  assert.deepEqual(readdirSync(child).sort(), [".git", "README.md", "file", "lib", "node_modules"]);
+  assert.deepEqual(JSON.parse(read(root, "package.json")), { version: "0.1.0", name: "@x/parent", dependencies: { "@x/other": "^1.0.0" } });
+  assert.equal(read(root, "package.json").endsWith("}\n"), true);
+  // The parent has source, and a manifest below a repository's root is not this rule's.
+  assert.equal(existsSync(join(root, "lib/unit/package.json")), true);
+  assert.deepEqual([...sourcelessManifests(root)], []);
+  assert.deepEqual(status(child), ["D .npmrc", "D package-lock.json", "D package.json"]);
+});
+
+test("a manifest stays when its repository has source, or an entry field names a file that exists", (t) => {
+  const { root, child } = forest(t, {
+    parent: { "package.json": "{\"name\":\"@x/parent\",\"exports\":{\"./norms.json\":\"./norms.json\"}}\n", "norms.json": "{}\n" },
+    child: { "package.json": "{\"name\":\"@x/child\"}\n", "scripts/deep/run.ts": "export {};\n" },
+  });
+  assert.deepEqual([...sourcelessManifests(root, { apply: true })], []);
+  // Source in a nested repository is that repository's, not its parent's.
+  rmSync(join(root, "norms.json"));
+  assert.deepEqual([...sourcelessManifests(root, { apply: true })].map((row) => [row.name, row.outcome]), [["@x/parent", "removed"]]);
+  assert.equal(existsSync(join(child, "package.json")), true);
+  // A package norms.json keeps by name is reported with the reason, and stays.
+  rmSync(join(child, "scripts"), { recursive: true });
+  const norms = loadNorms();
+  norms.layout.manifests.keep = { "@x/child": "resolved by name" };
+  assert.deepEqual([...sourcelessManifests(root, { apply: true, norms })], [{ kind: "manifest", repository: child, name: "@x/child", outcome: "kept", reason: "resolved by name" }]);
+  assert.equal(existsSync(join(child, "package.json")), true);
+});
+
+test("a README alone among directories is removed; hidden names do not count, and a README beside a file or alone stays", (t) => {
+  const { root, child } = forest(t, {
+    parent: { "README.md": "parent\n", "docs/README.md": "docs\n", "docs/sub/README.md": "leaf\n", "docs/sub2/a.md": "a\n", "lib/legacy/README.md": "legacy\n", "lib/legacy/x/y.md": "y\n", "node_modules/README.md": "dep\n", "node_modules/x/y.md": "y\n" },
+    child: { "README.md": "child\n", ".gitignore": "x\n", "content/a.md": "a\n" },
+  });
+  rmSync(join(child, "file"));
+  const found = (apply) => [...bareReadmes(root, { apply })].map((row) => [row.repository === child ? "child" : "parent", row.file, row.outcome]);
+  // The parent's own README stands beside `file`.
+  assert.deepEqual(found(false), [["parent", "docs/README.md", "would remove"], ["parent", "lib/legacy/README.md", "would remove"], ["child", "README.md", "would remove"]]);
+  assert.deepEqual(found(true).map((row) => row[2]), ["removed", "removed", "removed"]);
+  assert.deepEqual(found(false), []);
+  assert.equal(read(root, "README.md"), "parent\n");
+  assert.equal(read(root, "docs/sub/README.md"), "leaf\n");
+  assert.equal(read(root, "node_modules/README.md"), "dep\n");
+  assert.deepEqual(status(child), ["D README.md", "D file"]);
 });

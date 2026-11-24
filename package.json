@@ -13,7 +13,8 @@
     "./norms.json": "./norms.json",
     "./frontdoor": "./src/frontdoor.mjs",
     "./package-surface": "./src/package-surface.mjs",
-    "./layout": "./src/layout.mjs"
+    "./layout": "./src/layout.mjs",
+    "./removals": "./src/removals.mjs"
   },
   "files": [
     "bin",

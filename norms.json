@@ -24,7 +24,7 @@
       "content": ["text", "agent-cards", "agent-card-signing", "deployment", "config", "assets", "evm", "offices", "contracts", "offers", "media", "policies", "micro-enterprises", "packets", "capcell", "exchanges", "works", "curricula", "source-packets", "sku", "lesson-briefs", "duties", "books", "accounts", "references", "provider-admissions", "manifests", "incumbencies", "characters", "activitypub"],
       "content/text": ["glossary", "documents"],
       "content/text/documents": ["articles"],
-      "content/text/documents/articles": ["notes", "teaching-articles", "specifications", "bibliographies", "research-articles"],
+      "content/text/documents/articles": ["notes", "teaching-articles", "specifications", "bibliographies", "research-articles", "template-articles"],
       "data": ["logs", "records", "state"],
       "data/records": ["schemas", "service-records"],
       "lib": ["agency", "legacy"]
@@ -40,9 +40,38 @@
         "rule": "schemas-under-data-records",
         "from": "data/records/schema",
         "to": "data/records/schemas",
-        "reason": "emsenn, 2026-11-24: under data/records/, schemas/ is correct and schema/ is the misspelling. The services section form's content taxonomy lists the same relocation.",
-        "hold": "ruled but not yet ordered applied"
+        "reason": "emsenn, 2026-11-24: under data/records/, schemas/ is correct and schema/ is the misspelling (confirmed and ordered applied: \"schemas is correct\"). The services section form's content taxonomy lists the same relocation."
+      },
+      {
+        "rule": "templates-under-template-articles",
+        "from": "content/text/documents/templates",
+        "to": "content/text/documents/articles/template-articles",
+        "reason": "emsenn, 2026-11-24: templates are articles; content/text/documents/templates moves to content/text/documents/articles/template-articles."
       }
-    ]
+    ],
+    "forbidden": {
+      "reason": "emsenn, 2026-11-24: \"Delete all ./NOTICE from across all directories. Delete all ./LICENSE from across all directories.\" Applies inside lib/legacy too.",
+      "names": ["NOTICE", "LICENSE"],
+      "skip": [".git", "node_modules"]
+    },
+    "manifests": {
+      "reason": "emsenn, 2026-11-24: \"If a repository does not offer Node.js software source code, do not put a package.json in it.\" A manifest that depends on a removed one loses that dependency entry.",
+      "file": "package.json",
+      "sourceExtensions": [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"],
+      "sourceSkip": ["node_modules", "lib/legacy"],
+      "entryFields": ["bin", "main", "exports"],
+      "dependencyFields": ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"],
+      "dependentSkip": [".git", "node_modules"],
+      "beside": [".npmrc", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"],
+      "keep": {
+        "@causeway-services/equivo.561.group": "equivo-service themes/equivo/build-world.mjs finds the corpus by resolving this package's package.json"
+      }
+    },
+    "bareReadmes": {
+      "reason": "emsenn, 2026-11-24: \"if a directory has nothing but directories and a README, delete the README\". Hidden names (.git, .gitignore, .gitmodules, .gitattributes) do not count as content. Read after the forbidden and manifests removals.",
+      "file": "README.md",
+      "hidden": "^\\.",
+      "skip": [".git", "node_modules"]
+    }
   }
 }

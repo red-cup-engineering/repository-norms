@@ -14,7 +14,8 @@ import { loadNorms } from "./naming.mjs";
 
 const under = (path, directory) => directory === "" || path === directory || path.startsWith(`${directory}/`);
 const endsWithPath = (path, tail) => path === tail || path.endsWith(`/${tail}`);
-const entries = (directory) => readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
+// A directory another process removed during the walk reads as empty.
+const entries = (directory) => { try { return readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)); } catch (error) { if (error.code === "ENOENT") return []; throw error; } };
 const isRepository = (directory) => existsSync(join(directory, ".git"));
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
@@ -204,10 +205,11 @@ function rewriteReferences(repository, entry, { moved, kept, apply, git, skip })
  * Moves every variant directory of one rule under `root` onto its canonical path, in the repository that owns it.
  * A file the canonical directory lacks is moved (`git mv` when tracked); a file it already holds with the same content
  * is dropped from the variant; a file it holds with other content stays where it is and is listed in `kept`.
+ * With `worktree` every move and drop is a plain rename or unlink: no git command writes, so the index is untouched.
  * Without `apply` nothing changes. Yields one `relocation` row per variant directory, then one `references` row per
  * repository changed. A rule that `norms.json` holds, and a variant directory holding a nested repository, are refused.
  */
-export function* relocate(root, { rule, apply = false, norms = loadNorms(), git = createGit() } = {}) {
+export function* relocate(root, { rule, apply = false, worktree = false, norms = loadNorms(), git = createGit() } = {}) {
   const { skip, relocations } = layoutOf(norms);
   const entry = relocations.find((candidate) => candidate.rule === rule);
   if (!entry) throw new Error(`no layout rule named ${rule}; norms.json has ${relocations.map((candidate) => candidate.rule).join(", ")}`);
@@ -221,10 +223,10 @@ export function* relocate(root, { rule, apply = false, norms = loadNorms(), git 
     const failed = [];
     let untracked = 0;
     if (apply) {
-      const tracked = new Set(git(repository, ["ls-files", "-z", "--", found]).split("\0").filter(Boolean));
+      const tracked = new Set(worktree ? [] : git(repository, ["ls-files", "-z", "--", found]).split("\0").filter(Boolean));
       const attempt = (file, act) => { try { act(); return true; } catch (error) { failed.push({ file, error: String(error.message ?? error).split("\n")[0] }); return false; } };
       for (const { from, to } of plan.move) {
-        if (!tracked.has(from)) untracked += 1;
+        if (!worktree && !tracked.has(from)) untracked += 1;
         const done = attempt(from, () => {
           mkdirSync(dirname(join(repository, to)), { recursive: true });
           if (tracked.has(from)) git(repository, ["mv", "--", from, to]);
@@ -233,7 +235,7 @@ export function* relocate(root, { rule, apply = false, norms = loadNorms(), git 
         if (done) state.moved.set(from, to); else state.kept.push(from);
       }
       for (const { from, to } of plan.drop) {
-        if (!tracked.has(from)) untracked += 1;
+        if (!worktree && !tracked.has(from)) untracked += 1;
         const done = attempt(from, () => {
           if (!tracked.has(from)) return unlinkSync(join(repository, from));
           // The canonical copy takes the dropped copy's place in the index when it was not tracked itself.
