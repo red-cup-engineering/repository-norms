@@ -73,7 +73,7 @@ if (values.help || command === undefined) {
   if (counts["files failed"] || left) process.exitCode = 1;
 } else if (command === "forbidden" || command === "manifests" || command === "readmes") {
   const counts = {};
-  for (const row of ({ forbidden: forbiddenFiles, manifests: sourcelessManifests, readmes: bareReadmes })[command](dir, { apply: values.apply, norms })) { line(row); counts[row.outcome] = (counts[row.outcome] ?? 0) + 1; }
+  for (const row of ({ forbidden: forbiddenFiles, manifests: sourcelessManifests, readmes: bareReadmes })[command](dir, { apply: values.apply, rule: values.rule, norms })) { line(row); counts[row.outcome] = (counts[row.outcome] ?? 0) + 1; }
   process.stderr.write(`${JSON.stringify(counts)}\n`);
   if (counts.failed || (!values.warn && (counts.refused || (!values.apply && counts["would remove"])))) process.exitCode = 1;
 } else if (command === "mounts" || command === "nesting" || command === "subjects" || command === "check-all" || command === "check-staged") {

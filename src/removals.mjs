@@ -100,3 +100,58 @@ export function* bareReadmes(root, { apply = false, norms = loadNorms() } = {}) 
     yield { kind: "bare-readme", repository, file: path ? `${path}/${file}` : file, outcome: !apply ? "would remove" : error ? "failed" : "removed", ...(error ? { error } : {}) };
   }
 }
+
+const TEST_SCRIPT_NAME = /^(?:pre|post)?test(?::.*)?$/u;
+const TEST_COMMAND = /\b(?:node\s+--test|jest|vitest|mocha|ava|tap)\b|\btests?\/|\.(?:test|spec)\.|\b__tests__\b/u;
+const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.(?:mjs|js|cjs|ts|mts|tsx)$/u;
+const MENTION_LIMIT = 2 * 1024 * 1024;
+
+/** Whether any file in `repository` (outside `gone`, `.git`, `node_modules` and nested repositories) is a test file or names `name`. */
+function repositoryHolds(repository, gone, { names = [] } = {}) {
+  const found = { tests: false, mentioned: new Set() };
+  const visit = (directory, path) => {
+    let listed; try { listed = readdirSync(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of listed) {
+      const below = path ? `${path}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (entry.name === ".git" || entry.name === "node_modules" || stat(join(directory, entry.name, ".git"))) continue;
+        visit(join(directory, entry.name), below);
+      } else if (entry.isFile() && !gone.has(below)) {
+        if (TEST_FILE.test(below)) found.tests = true;
+        if (names.length === 0 || below === "package.json" || /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|npm-shrinkwrap\.json)$/u.test(below)) continue;
+        let text; try { if (stat(join(directory, entry.name)).size > MENTION_LIMIT) continue; text = readFileSync(join(directory, entry.name), "utf8"); } catch { continue; }
+        for (const name of names) if (text.includes(name)) found.mentioned.add(name);
+      }
+    }
+  };
+  visit(repository, "");
+  return found;
+}
+
+/**
+ * What a package held only for the hand-written tests removed from `repository` (`gone`: their paths in it, `texts`: what
+ * they said): its `test` scripts, when no test file is left, and each `devDependencies` entry the removed tests named that
+ * no other file or script names. With `apply` the root manifest is rewritten in its own indentation.
+ */
+export function releaseTestSupport(repository, gone, texts, { apply = false } = {}) {
+  const file = join(repository, "package.json");
+  let text, manifest; try { text = readFileSync(file, "utf8"); manifest = JSON.parse(text); } catch { return null; }
+  const goneSet = new Set(gone);
+  const devDependencies = Object.keys(manifest.devDependencies ?? {});
+  const fromTests = devDependencies.filter((name) => texts.some((said) => said.includes(name)));
+  const held = repositoryHolds(repository, goneSet, { names: fromTests });
+  const scripts = Object.entries(manifest.scripts ?? {}).filter(([name, command]) => TEST_SCRIPT_NAME.test(name) && TEST_COMMAND.test(String(command))).map(([name]) => name);
+  const releasedScripts = held.tests ? [] : scripts;
+  const rest = Object.entries(manifest.scripts ?? {}).filter(([name]) => !releasedScripts.includes(name)).map(([, command]) => String(command));
+  const releasedDependencies = fromTests.filter((name) => !held.mentioned.has(name) && !rest.some((command) => command.includes(name)));
+  if (releasedScripts.length === 0 && releasedDependencies.length === 0) return null;
+  let error = null;
+  if (apply) {
+    for (const name of releasedScripts) delete manifest.scripts[name];
+    if (manifest.scripts && Object.keys(manifest.scripts).length === 0) delete manifest.scripts;
+    for (const name of releasedDependencies) delete manifest.devDependencies[name];
+    if (manifest.devDependencies && Object.keys(manifest.devDependencies).length === 0) delete manifest.devDependencies;
+    try { writeFileSync(file, `${JSON.stringify(manifest, null, /^([ \t]+)"/mu.exec(text)?.[1] ?? 2)}${text.endsWith("\n") ? "\n" : ""}`); } catch (thrown) { error = String(thrown.message ?? thrown).split("\n")[0]; }
+  }
+  return { kind: "test-support", repository, scripts: releasedScripts, devDependencies: releasedDependencies, outcome: !apply ? "would remove" : error ? "failed" : "removed", ...(error ? { error } : {}) };
+}

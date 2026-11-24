@@ -17,11 +17,12 @@ import { readGitmodules } from "@red-cup-engineering/git-engine/gitmodules";
  * and the section form is its `listSectionFormViolations`. Those three are loaded when a whole-tree check asks.
  */
 import { checkServicesSectionPlacement, deriveServicesSectionName, sectionOwner, servicesSectionOwner } from "@red-cup-engineering/service-section-engineering-services-section/derive-section-path";
-import { existsSync, lstatSync, readdirSync, rmSync, unlinkSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { existsSync, lstatSync, readFileSync, readdirSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
+import { isGeneratedTestFile } from "@red-cup-engineering/service-section-engineering-services-section/section-law";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { canonicalOf, layoutOf, reportLayout, walkEntries } from "./layout.mjs";
 import { loadNorms } from "./naming.mjs";
-import { bareReadmes, sourcelessManifests } from "./removals.mjs";
+import { bareReadmes, releaseTestSupport, sourcelessManifests } from "./removals.mjs";
 
 const GITLINK = "160000";
 const under = (path, directory) => path === directory || path.startsWith(`${directory}/`);
@@ -40,7 +41,10 @@ export function globToRegExp(glob, { anyDepth = false, flags = "u" } = {}) {
   const source = names.map((name, at) => {
     const last = at === names.length - 1;
     if (name === "**") return last ? ".*" : "(?:[^/]+/)*";
-    return `${name.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, "[^/]*").replace(/\?/gu, "[^/]")}${last ? "" : "/"}`;
+    // `{a,b}` is one of the alternatives; every other character is read as a literal, `*` and `?` within a name.
+    const escape = (text) => text.replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, "[^/]*").replace(/\?/gu, "[^/]");
+    const pieces = name.split(/(\{[^{}]*\})/u).map((piece) => (/^\{[^{}]*\}$/u.test(piece) ? `(?:${piece.slice(1, -1).split(",").map(escape).join("|")})` : escape(piece)));
+    return `${pieces.join("")}${last ? "" : "/"}`;
   }).join("");
   return new RegExp(`^${anyDepth && !rooted ? "(?:.*/)?" : ""}${source}$`, flags);
 }
@@ -219,19 +223,26 @@ const holdsRepository = (directory) => { try { return readdirSync(directory, { w
 /**
  * Every file or directory under `root` that a `layout.forbidden.paths` row names, outside the `layout.forbidden.skip`
  * paths. A row is "would remove", "removed" or "failed" when its mode is `remove`, and "refused" when it is `refuse`:
- * that one is never removed. Neither is a directory that holds a repository.
+ * that one is never removed. Neither is a directory that holds a repository. `rule` limits the rows to those whose rule
+ * name starts with it. A row with `unless: "generated-from-specification"` leaves a test file its generator writes, and
+ * a row's `outside` paths are not read.
  */
-export function* checkForbidden(root, { apply = false, norms = loadNorms() } = {}) {
-  const { skip, rows } = forbiddenOf(norms);
-  const found = [];
-  walkEntries(root, { skip, visit: ({ repository, path, kind, absolute }) => {
+export function* checkForbidden(root, { apply = false, rule, norms = loadNorms() } = {}) {
+  const { skip, rows: all } = forbiddenOf(norms);
+  const rows = rule ? all.filter((row) => row.rule.startsWith(rule)) : all;
+  const found = [], emptied = new Set(), tests = new Map();
+  walkEntries(root, { skip, visit: ({ repository, path, below, kind, absolute }) => {
     const isDirectory = kind === "directory";
     let gone = false;
     for (const row of rows) {
       if ((row.type === "directory") !== isDirectory || !row.matches.test(path)) continue;
+      // A row's `outside` paths are not living packages; its `unless` names the evidence that lets a file stand.
+      if ((row.outside ?? []).some((tail) => `/${below}/`.includes(`/${tail}/`))) continue;
+      if (row.unless === "generated-from-specification" && isGeneratedTestFile(repository, path)) continue;
       const finding = { kind: "forbidden", rule: row.rule, repository, [isDirectory ? "directory" : "file"]: path, mode: row.mode };
       if (row.mode !== "remove") { found.push({ ...finding, outcome: "refused", ...(row.reason ? { reason: row.reason } : {}) }); continue; }
-      if (!apply) { found.push({ ...finding, outcome: "would remove" }); continue; }
+      if (row.unless) { const bucket = tests.get(repository) ?? tests.set(repository, { gone: [], texts: [] }).get(repository); bucket.gone.push(path); try { bucket.texts.push(readFileSync(absolute, "utf8")); } catch { /* an unreadable file names no dependency */ } }
+      if (!apply) { found.push({ ...finding, outcome: "would remove" }); if (!isDirectory) break; continue; }
       let error = null;
       try {
         if (isDirectory && holdsRepository(absolute)) error = "holds a repository";
@@ -239,10 +250,20 @@ export function* checkForbidden(root, { apply = false, norms = loadNorms() } = {
         else unlinkSync(absolute);
       } catch (thrown) { error = firstLine(thrown); }
       gone ||= error === null;
+      if (error === null && row.unless) emptied.add(dirname(absolute));
       found.push({ ...finding, outcome: error ? "failed" : "removed", ...(error ? { error } : {}) });
+      if (!isDirectory && error === null) break;
     }
     return !gone;
   } });
+  // A directory that held only removed tests, or fixtures for them, is removed with them, up to the test directory itself.
+  const testDirectory = /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)/u;
+  for (const start of [...emptied].sort((a, b) => b.length - a.length)) {
+    for (let at = start; testDirectory.test(relative(resolve(root), at)); at = dirname(at)) {
+      try { if (readdirSync(at).length > 0) break; rmdirSync(at); } catch { break; }
+    }
+  }
+  for (const [repository, { gone, texts }] of tests) { const row = releaseTestSupport(repository, gone, texts, { apply }); if (row) found.push(row); }
   yield* found;
 }
 

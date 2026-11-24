@@ -5,7 +5,7 @@ export const COMMANDS = [
   { usage: "frontdoor [DIR] [--json] [--warn]", does: "evidence-bound README entry-page observations" },
   { usage: "layout [ROOT] [--rule RULE] [--warn]", does: "every directory a layout rule relocates" },
   { usage: "relocate [ROOT] --rule RULE [--apply [--worktree]]", does: "moves one rule's directories onto their canonical paths and rewrites the references to them", changes: "--apply (--worktree: no git command writes)" },
-  { usage: "forbidden [ROOT] [--apply]", does: "every file whose name is forbidden", changes: "--apply removes them" },
+  { usage: "forbidden [ROOT] [--rule PREFIX] [--apply]", does: "every file whose name is forbidden (hand-written tests: those no specification generates)", changes: "--apply removes them" },
   { usage: "manifests [ROOT] [--apply]", does: "every root manifest without Node.js source", changes: "--apply removes them" },
   { usage: "readmes [ROOT] [--apply]", does: "every README alone among directories", changes: "--apply removes them" },
   { usage: "remove-paths [ROOT] [--apply]", does: 'the paths listed on stdin as JSON lines {"path": ...}, relative to ROOT', changes: "--apply removes them from the worktree" },
