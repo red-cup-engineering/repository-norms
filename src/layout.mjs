@@ -148,7 +148,7 @@ export async function* relocate(root, { rule, apply = false, worktree = false, n
     const state = changed.get(repository) ?? { rewritten: [], remaining: [], ambiguous: [] };
     changed.set(repository, state);
     const kept = plan.keep.map((file) => ({ file, canonical: `${row.canonical}${file.slice(found.length)}` }));
-    const request = requestFor(repository, found, row.canonical, { references: "mentions", supportedBy: `the section law's layout rule ${rule}`, excludeCarriers: norms.lawSources ?? [], stage: apply && !worktree });
+    const request = requestFor(repository, found, row.canonical, { references: "mentions", keepStatements: true, supportedBy: `the section law's layout rule ${rule}`, excludeCarriers: norms.lawSources ?? [], stage: apply && !worktree });
     if (plan.files === 0 || plan.move.length + plan.drop.length === 0) {
       yield { kind: "relocation", ...row, outcome: apply ? "moved" : "would move", moved: 0, dropped: 0, kept };
       continue;
