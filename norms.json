@@ -14,5 +14,35 @@
     ["-services-sector$", "-services-section"]
   ],
   "archive": "^\\d{4}-\\d{2}-\\d{2}-",
-  "meta": [".github"]
+  "meta": [".github"],
+  "layout": {
+    "sourceOfAuthority": "The services section form (561-group-services-section data/records/schemas/services-section-form.schema.json, laws contentUnderContentText and dataTrioOnly, and services-section-form-content-taxonomy.json): every section, package and unit shares one recursive directory layout. `standard` lists the directory names that form states for each position (its knownTopLevelNames, recognized content roles, contentTaxonomyPaths, dataTrioNames and relocation targets); the census proposes them as canonical. Each relocation is one ruling: `from` is a path variant and `to` the canonical path, both relative to the same directory at any depth of a repository. A relocation with `hold` is reported by the check and the census and refused by the fix.",
+    "skip": [".git", "node_modules", "data/state", "lib/legacy"],
+    "positions": ["", "content", "content/text", "content/text/documents", "content/text/documents/articles", "data", "data/records", "lib"],
+    "standard": {
+      "": ["content", "data", "src", "scripts", "apps", "test", "publications", "services", "lib", "sites"],
+      "content": ["text", "agent-cards", "agent-card-signing", "deployment", "config", "assets", "evm", "offices", "contracts", "offers", "media", "policies", "micro-enterprises", "packets", "capcell", "exchanges", "works", "curricula", "source-packets", "sku", "lesson-briefs", "duties", "books", "accounts", "references", "provider-admissions", "manifests", "incumbencies", "characters", "activitypub"],
+      "content/text": ["glossary", "documents"],
+      "content/text/documents": ["articles"],
+      "content/text/documents/articles": ["notes", "teaching-articles", "specifications", "bibliographies", "research-articles"],
+      "data": ["logs", "records", "state"],
+      "data/records": ["schemas", "service-records"],
+      "lib": ["agency", "legacy"]
+    },
+    "relocations": [
+      {
+        "rule": "documents-under-content-text",
+        "from": "content/documents",
+        "to": "content/text/documents",
+        "reason": "emsenn, 2026-11-24: \"across the repo, we NEVER have content/documents and only have content/text/documents/\". The services section form states the same as law contentUnderContentText."
+      },
+      {
+        "rule": "schemas-under-data-records",
+        "from": "data/records/schema",
+        "to": "data/records/schemas",
+        "reason": "emsenn, 2026-11-24: under data/records/, schemas/ is correct and schema/ is the misspelling. The services section form's content taxonomy lists the same relocation.",
+        "hold": "ruled but not yet ordered applied"
+      }
+    ]
+  }
 }

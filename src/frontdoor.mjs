@@ -6,7 +6,7 @@
  */
 import { posix } from 'node:path';
 import { assessPackageSurface } from "./package-surface.mjs";
-import { parseGitmodules } from "./submodules.mjs";
+import { parseGitmodules } from "@red-cup-engineering/git-engine/gitmodules";
 
 const link = /!?\[[^\]\n]*\]\((<?[^)\s>]+>?)(?:\s+"[^"]*")?\)/gu;
 // Capture backtick references without conflating code examples or normal prose.

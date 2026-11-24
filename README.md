@@ -23,6 +23,10 @@ The 561 Group's repository norms, as checks that run in CI and across the estate
   `https://github.com/` repository of a house organization, and the composing directory is named for the
   repository it composes.
 
+- **Layout.** Every section, package and unit shares one recursive directory layout. Each layout rule is one row of
+  `layout.relocations`: a path variant (`from`) and its canonical path (`to`), read at any depth of a repository.
+  A row with `hold` is reported but not fixed. A new rule is a new row, not new code.
+
 The norms are data in [`norms.json`](norms.json).
 
 ## First-visit clarity checks
@@ -106,6 +110,30 @@ node bin/repository-norms.mjs check .            # this checkout: its own name a
 node bin/repository-norms.mjs check . --warn     # report without failing
 node bin/repository-norms.mjs estate --org red-cup-engineering --org lenticule-science   # every name, as JSON lines
 ```
+
+### Layout across a tree of repositories
+
+These three walk ROOT through every checked-out repository below it, skipping `.git`, `node_modules`, `data/state` and
+`lib/legacy`, and print JSON lines. They need the workspace package preload, and write no file of their own.
+
+```sh
+node bin/repository-norms.mjs layout ROOT [--rule RULE] [--warn]    # each variant directory; exit 1 on findings
+node bin/repository-norms.mjs relocate ROOT --rule RULE             # dry run: what the fix would move and rewrite
+node bin/repository-norms.mjs relocate ROOT --rule RULE --apply     # move with git mv in each owning repository
+node bin/repository-norms.mjs census ROOT                           # directory names per layout position, and candidate rules
+```
+
+- `layout` prints `rule`, `repository`, `found`, `canonical`, `files`, `canonicalExists` and `collisions` (files both
+  directories hold with different content).
+- `relocate` merges the variant directory into the canonical one. A file both hold with the same content is dropped
+  from the variant; a file both hold with different content stays where it is and is listed in `kept`. It then
+  rewrites references inside the same repository: markdown links that resolve to a moved path, links in moved files
+  that climb out of the moved directory, and other mentions that name a moved file. Every mention it leaves is listed
+  in `remaining` with the reason. It stages moves and commits nothing.
+- `census` counts directory names under each `layout.positions` path of each repository root (`name` rows), then
+  proposes rules (`candidate` rows): singular and plural forms, hyphen, underscore or case differences, and one name at
+  two depths. The proposed canonical is the ruling in `norms.json` when there is one, otherwise the seat
+  `layout.standard` states for that name, otherwise the form more repositories use; `basis` says which.
 
 In GitHub Actions, call the reusable workflow
 `red-cup-engineering/continuous-delivery-engineering-services-section/.github/workflows/repository-norms.yml`.

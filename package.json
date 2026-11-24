@@ -12,7 +12,8 @@
     "./submodules": "./src/submodules.mjs",
     "./norms.json": "./norms.json",
     "./frontdoor": "./src/frontdoor.mjs",
-    "./package-surface": "./src/package-surface.mjs"
+    "./package-surface": "./src/package-surface.mjs",
+    "./layout": "./src/layout.mjs"
   },
   "files": [
     "bin",
@@ -21,7 +22,8 @@
     "README.md"
   ],
   "scripts": {
-    "check": "node bin/repository-norms.mjs check ."
+    "check": "node bin/repository-norms.mjs check .",
+    "test": "NODE_OPTIONS=\"--experimental-import-meta-resolve --import=$LAGOON_WORKSPACE/services/engineering-services-section/services/computer-engineering-services-section/services/computer-systems-engineering-services-section/services/computer-operating-systems-engineering-services-section/services/computer-distributed-operating-systems-engineering-services-section/apps/lagoon/src/resolve-checkouts.mjs\" node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=22"
