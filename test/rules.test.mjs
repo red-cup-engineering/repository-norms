@@ -67,6 +67,7 @@ test("the placement rules are data: mounts, one mount per repository, nesting, s
   assert.deepEqual(modes, {
     NOTICE: "file remove", LICENSE: "file remove", "**/content/config/capability-providers.json": "file remove", "**/*.nq": "file remove",
     "repository-selected-main-reconciliation.ndjson": "file remove", "lib/agency/skills/*/scripts": "directory remove",
+    "data/records/agent-records/skills/*/scripts": "directory remove", ".github/workflows": "directory remove", "lib/github-defaults/workflows": "directory remove",
     "lib/agency": "directory refuse", triage: "directory refuse", _archive: "directory refuse", "lib/legacy/restored-from-main": "directory refuse", "content/documents": "directory refuse", "data/records/schema": "directory refuse",
   });
 });
