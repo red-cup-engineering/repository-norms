@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { canonicalOf, censusLayout, relocate, reportLayout } from "../src/layout.mjs";
-import { loadNorms } from "../src/naming.mjs";
+import { canonicalOf, censusLayout, relocate, reportLayout, statedRulesKept } from "../src/layout.mjs";
+import { lawSourceFiles, loadNorms } from "../src/naming.mjs";
 import { bareReadmes, forbiddenFiles, sourcelessManifests } from "../src/removals.mjs";
 
 Object.assign(process.env, { GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.invalid" });
@@ -174,6 +174,31 @@ test("references that provably name a moved path are rewritten; the rest are lis
     "package.json: content/documents/b.md -> content/text/documents/b.md",
     "scripts/read.mjs: ../content/documents/a.md -> ../content/text/documents/a.md",
   ]);
+});
+
+test("the rewriter never touches the law's own data files, wherever they are, nor a relocation row's from field", (t) => {
+  const row = `${JSON.stringify({ relocations: [{ from: "content/documents/", to: "content/text/documents/", rule: RULE, reason: "content/documents moves to content/text/documents; see content/documents/a.md" }] }, null, 2)}\n`;
+  const { root } = forest(t, { parent: { "content/documents/a.md": "a\n", "law/taxonomy.json": row, "other/rows.json": row, "README.md": "[a](content/documents/a.md)\n" } });
+  const lawFile = realpathSync(join(root, "law/taxonomy.json"));
+  const norms = { ...loadNorms(), lawSources: [lawFile] };
+  rows(root, { apply: true, norms });
+  assert.equal(read(root, "README.md"), "[a](content/text/documents/a.md)\n");
+  assert.equal(read(root, "law/taxonomy.json"), row, "the law file is untouched");
+  const other = JSON.parse(read(root, "other/rows.json")).relocations[0];
+  assert.equal(other.from, "content/documents/", "a from field is never rewritten, in any file");
+  assert.equal(other.to, "content/text/documents/");
+  assert.equal(other.reason, "content/documents moves to content/text/documents; see content/documents/a.md");
+  const reports = loadNorms().lawSources;
+  assert.ok(reports.length >= 4 && reports.every((file) => file === realpathSync(file)) && reports.some((file) => file.endsWith("services-section-form-content-taxonomy.json")));
+  assert.deepEqual(lawSourceFiles(), reports);
+});
+
+test("a statement of the rule is not a reference: a line naming both the variant and the canonical path is kept", () => {
+  const entry = { from: "lib/agency/skills", to: "data/records/agent-records/skills" };
+  const before = "lib/agency/skills is forbidden; use data/records/agent-records/skills\nsee lib/agency/skills/a/SKILL.md\n";
+  const after = "data/records/agent-records/skills is forbidden; use data/records/agent-records/skills\nsee data/records/agent-records/skills/a/SKILL.md\n";
+  assert.equal(statedRulesKept(before, after, entry), "lib/agency/skills is forbidden; use data/records/agent-records/skills\nsee data/records/agent-records/skills/a/SKILL.md\n");
+  assert.equal(statedRulesKept("a\nb\n", "a\nb\nc\n", entry), "a\nb\nc\n");
 });
 
 test("the fix refuses a held rule, an unknown rule, and a variant directory that holds a repository", (t) => {

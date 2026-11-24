@@ -15,7 +15,7 @@ import { planMovedPathReferenceUpdates } from "@red-cup-engineering/service-sect
  * the names `data/` may hold are the data-custody-directory service's.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNorms } from "./naming.mjs";
@@ -180,6 +180,20 @@ function classifyRemaining(line, found, { origin, moved }) {
   return REMAINING.none;
 }
 
+const RELOCATION_FROM = /"from"\s*:/u;
+/**
+ * A statement of the rule is not a reference to a path. Of the lines the planner changed, a line stays as it was when it
+ * is a `"from"` field (a relocation row's own variant path) or when it already names both the rule's variant path and its
+ * canonical path ("X is forbidden; use Y": rewriting X would make it read "Y is forbidden; use Y"). A rewrite that
+ * changed the number of lines is kept whole, as the lines cannot be paired.
+ */
+export function statedRulesKept(before, after, { from, to }) {
+  const was = before.split("\n"), now = after.split("\n");
+  if (was.length !== now.length) return after;
+  const names = (line, path) => new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(path)}(?![A-Za-z0-9_-])`, "u").test(line);
+  return now.map((line, index) => (line !== was[index] && (RELOCATION_FROM.test(was[index]) || (names(was[index], from) && names(was[index], to))) ? was[index] : line)).join("\n");
+}
+
 /**
  * Rewrites the references `repository` holds to paths a relocation moved, and lists the mentions of the variant path
  * that are left. The edits are the services-section engine's `planMovedPathReferenceUpdates`: repository-relative and
@@ -187,7 +201,7 @@ function classifyRemaining(line, found, { origin, moved }) {
  * stayed. When the planner holds its plan (a bare directory name it cannot tell from a word) nothing is rewritten.
  * `moved` maps old file path to new; a directory a collision left a file in did not wholly move, so it is not rewritten.
  */
-function rewriteReferences(repository, entry, { moved, apply, git, skip }) {
+function rewriteReferences(repository, entry, { moved, apply, git, skip, lawSources = [] }) {
   const oldOf = new Map([...moved].map(([from, to]) => [to, from]));
   const text = (file) => {
     const found = lstatSync(join(repository, file), { throwIfNoEntry: false });
@@ -199,7 +213,11 @@ function rewriteReferences(repository, entry, { moved, apply, git, skip }) {
   const standing = git(repository, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]).split("\0").filter((file) => file && lstatSync(join(repository, file), { throwIfNoEntry: false }));
   const tracked = [...new Set(standing.map((file) => (apply ? oldOf.get(file) ?? file : file)))];
   // Any text file may hold a path relative to itself, so each one outside the skipped paths is handed to the planner.
-  const candidates = new Set(textFiles(repository, git, skip, ["^"]));
+  // The law's own data files (`norms.lawSources`, the files the section-law loader reads) are never rewritten: a rule
+  // states a path, it does not refer to it. A law file that is itself moved is known by where it stood and where it stands.
+  const law = new Set(lawSources.map((file) => resolve(file)));
+  const isLaw = (file) => [file, oldOf.get(file)].some((name) => name !== undefined && [join(repository, name), (() => { try { return realpathSync(join(repository, name)); } catch { return null; } })()].some((path) => path !== null && law.has(resolve(path))));
+  const candidates = new Set(textFiles(repository, git, skip, ["^"]).filter((file) => !isLaw(file)));
   const files = [...candidates].sort().flatMap((file) => { const read = text(file); return read === null ? [] : [{ at: file, path: apply ? file : moved.get(file) ?? file, text: read }]; });
   const rewritten = [], remaining = [];
   let planned = [];
@@ -214,9 +232,10 @@ function rewriteReferences(repository, entry, { moved, apply, git, skip }) {
   for (const file of files) {
     const plan = after.get(file.path);
     for (const update of plan?.updates ?? []) rewritten.push({ file: file.path, from: update.from, to: update.to, count: update.count });
-    if (plan && apply) writeFileSync(join(repository, file.at), plan.text);
+    const kept = plan ? statedRulesKept(file.text, plan.text, entry) : file.text;
+    if (plan && apply && kept !== file.text) writeFileSync(join(repository, file.at), kept);
     const origin = apply ? oldOf.get(file.at) ?? file.at : file.at;
-    (plan?.text ?? file.text).split("\n").forEach((line, index) => {
+    kept.split("\n").forEach((line, index) => {
       for (const found of line.matchAll(mention)) remaining.push({ file: file.path, line: index + 1, text: found[0], class: classifyRemaining(line, found, { origin, moved }), reason: "left by the reference planner" });
     });
   }
@@ -291,7 +310,7 @@ export function* relocate(root, { rule, apply = false, worktree = false, norms =
   }
   for (const [repository, { moved, kept }] of changed) {
     if (moved.size === 0) continue;
-    yield { kind: "references", rule, repository, outcome: apply ? "rewritten" : "would rewrite", ...rewriteReferences(repository, entry, { moved, apply, git, skip }) };
+    yield { kind: "references", rule, repository, outcome: apply ? "rewritten" : "would rewrite", ...rewriteReferences(repository, entry, { moved, apply, git, skip, lawSources: norms.lawSources ?? [] }) };
   }
 }
 
