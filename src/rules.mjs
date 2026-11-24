@@ -16,9 +16,10 @@ import { readGitmodules } from "@red-cup-engineering/git-engine/gitmodules";
  * `listFilepathsMatchingString`; placement derived from a section's name is the services-section engine's forest lint,
  * and the section form is its `listSectionFormViolations`. Those three are loaded when a whole-tree check asks.
  */
+import { checkServicesSectionPlacement, deriveServicesSectionName, sectionOwner, servicesSectionOwner } from "@red-cup-engineering/service-section-engineering-services-section/derive-section-path";
 import { existsSync, lstatSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { layoutOf, reportLayout, walkEntries } from "./layout.mjs";
+import { canonicalOf, layoutOf, reportLayout, walkEntries } from "./layout.mjs";
 import { loadNorms } from "./naming.mjs";
 import { bareReadmes, sourcelessManifests } from "./removals.mjs";
 
@@ -108,23 +109,6 @@ function readName(name, norms) {
 /** The name `subject` words take in an organization: `public-x-services-section`, `x-engineering-services-section`. */
 const nameIn = ({ domain, style }, subject, norms) => `${[...(style === "prefix" ? [domain] : []), ...subject, ...(style === "suffix" ? [domain] : [])].join("-")}${norms.sectionSuffix}`;
 
-/** The parent section of a mount at `<parent>/services/<name>`, or null when it is not mounted in a section's `services/`. */
-function nestedUnder(mounted, norms) {
-  const at = /^(?:(.*)\/)?services\/([^/]+)\/services\/([^/]+)$/u.exec(mounted);
-  if (!at || !at[2].endsWith(norms.sectionSuffix)) return null;
-  return { parent: `${at[1] ? `${at[1]}/` : ""}services/${at[2]}`, parentName: at[2], name: at[3] };
-}
-/** The parent's words the name of a section mounted at `mounted` lacks: empty when it specialises its parent, or is no section. */
-function missingParentWords(mounted, norms) {
-  const { words = false, except = [] } = norms.nesting ?? {};
-  const nested = nestedUnder(mounted, norms);
-  if (!words || !nested || except.includes(nested.name)) return [];
-  const child = readName(nested.name, norms);
-  // A plain application, library or service keeps its name; a name that carries the section suffix or an organization's prefix is a section's.
-  if (!child.section && child.style !== "prefix") return [];
-  return readName(nested.parentName, norms).words.filter((word) => !child.words.includes(word));
-}
-
 /**
  * Every mount under `root` that a `mounts.rules` row forbids where it stands (`kind` "mount"), and every repository
  * mounted at more than one path (`kind` "duplicate-mount", with all its `mounts` and `urls`; `by` says whether the
@@ -148,36 +132,66 @@ export function* checkMounts(root, { norms = loadNorms(), git = createGit(), mou
   }
 }
 
+/** The placement the section law derives from names, as one call of its script's `checkServicesSectionPlacement`. */
+function placementOf(sections) {
+  const law = { checkServicesSectionPlacement, deriveServicesSectionName, sectionOwner, servicesSectionOwner };
+  // As the forest lint reads them: a name with no owner under a known owner is not a placement question.
+  const owned = sections.filter(({ name, path }) => servicesSectionOwner(name) !== null || sectionOwner(path) === null);
+  return { law, ...checkServicesSectionPlacement({ sections: owned }) };
+}
+/** The placement diagnostics (code, message) of `path` in a `placementOf` result, selected by the law's `nesting.engineCodes`. */
+function placementReasons(placement, path, { engineCodes = ["SS003", "SS004", "SS005"], names = new Map() } = {}) {
+  const { law } = placement;
+  const reasons = [], candidates = [];
+  const renameOf = ({ name, path: at }) => law.deriveServicesSectionName({ name, parent: names.get(at.replace(/\/services\/[^/]+$/u, "")) ?? null, owner: law.sectionOwner(at) ?? undefined });
+  for (const row of placement.misplaced.filter((one) => one.path === path)) {
+    if (engineCodes.includes("SS003")) { reasons.push(`SS003 misplaced: the name derives another path: ${row.derived}`); candidates.push(row.derived); }
+  }
+  for (const row of placement.narrower.filter((one) => one.path === path)) {
+    const renamed = renameOf(row);
+    if (engineCodes.includes("SS005") && renamed.derived && renamed.renamed) { reasons.push("SS005 seated more specifically than its name says: it stays; its name gains its parent's words"); candidates.push(`${path.replace(/\/[^/]+$/u, "")}/${renamed.derived}`); }
+  }
+  for (const row of placement.refused.filter((one) => one.path === path && one.path.split("/").length > 2)) {
+    if (engineCodes.includes("SS004")) reasons.push(`SS004 no placement derives from the name: ${row.refused}${row.candidates ? ` (${row.candidates.join(", ")})` : ""}`);
+  }
+  return { reasons, candidates };
+}
+
 /**
- * Every mounted section whose name does not specialise its parent's: by `nesting.words`, and by the services-section
- * engine's forest lint for the `nesting.engineCodes` diagnostics. One row per section, with its `parent`, the `reasons`,
- * and the `candidates`: the path or name the engine derives, else the paths the other organizations' trees give the
- * same subject words. The forest lint reads committed trees with `cache: null`, so it writes nothing.
+ * Every section whose placement the section law derives elsewhere: this is the service-section package's
+ * `checkServicesSectionPlacement` (derive-section-path), called once over the sections, not a second reading of
+ * their names. A section is `misplaced` (its name derives another path), `refused` (no placement derives from its
+ * name) or `narrower` (seated more specifically than its name says: it stays, and its name gains its parent's
+ * words); `nesting.engineCodes` (SS003, SS004, SS005) selects which of the three are findings. One row per section,
+ * with its `parent`, the `reasons`, and the `candidates`: the path the law derives, else the paths the other
+ * organizations' trees give the same subject words. `sections` ({ name, path }) are the committed forest's by
+ * default, read with `cache: null`, so nothing is written.
  */
-export async function* checkNesting(root, { norms = loadNorms(), git = createGit(), mounts = [...readMounts(root, { git })] } = {}) {
-  const { engineCodes = [], except = [], candidates: most = 3 } = norms.nesting ?? {};
+export async function* checkNesting(root, { norms = loadNorms(), sections } = {}) {
+  const { engineCodes = ["SS003", "SS004", "SS005"], except = [], candidates: most = 3 } = norms.nesting ?? {};
   if (!norms.nesting) return;
   const found = new Map();
   const at = (path) => found.get(path) ?? found.set(path, { kind: "nesting", rule: norms.nesting.rule, path, name: path.split("/").pop(), parent: path.replace(/\/services\/[^/]+$/u, ""), reasons: [], candidates: [] }).get(path);
-  for (const { mounted } of mounts) {
-    const missing = missingParentWords(mounted, norms);
-    if (missing.length > 0) at(mounted).reasons.push(`its name lacks its parent's words: ${missing.join(", ")}`);
-  }
-  let sections = [...new Set(mounts.map(({ mounted }) => mounted))].filter((path) => path.endsWith(norms.sectionSuffix)).map((path) => ({ path, name: path.split("/").pop() }));
-  if (engineCodes.length > 0) {
-    const { readSectionForest, lintSectionForest, RULES } = await import("@red-cup-engineering/service-section-engineering-services-section/lint-services-section-forest");
+  let named = sections;
+  let names = new Map();
+  if (!named) {
+    const { readSectionForest } = await import("@red-cup-engineering/service-section-engineering-services-section/lint-services-section-forest");
     const nodes = await readSectionForest(resolve(root), { cache: null });
-    sections = nodes.filter((node) => node.name.endsWith(norms.sectionSuffix)).map(({ path, name }) => ({ path, name }));
-    for (const { path, code, message, rename } of lintSectionForest(nodes).diagnostics) {
-      if (!engineCodes.includes(code) || except.includes(path.split("/").pop())) continue;
-      const row = at(path);
-      row.reasons.push(`${code} ${message}`);
-      if (code === "SS003" && message.startsWith(`${RULES.SS003}: `)) row.candidates.push(message.slice(RULES.SS003.length + 2));
-      if (rename) row.candidates.push(`${row.parent}/services/${rename}`);
-    }
+    names = new Map(nodes.map((node) => [node.path, node.name]));
+    named = nodes.filter((node) => node.state !== "untracked" && node.state !== "leftover" && node.name.endsWith(norms.sectionSuffix) && node.name.length > norms.sectionSuffix.length).map(({ path, name }) => ({ path, name }));
+  }
+  names = new Map([...names, ...named.map(({ path, name }) => [path, name])]);
+  const placement = placementOf(named.map(({ path, name }) => ({ path, name })));
+  for (const { path } of named) {
+    if (except.includes(path.split("/").pop())) continue;
+    const { reasons, candidates } = placementReasons(placement, path, { engineCodes, names });
+    if (reasons.length === 0) continue;
+    const row = at(path);
+    row.reasons.push(...reasons);
+    row.candidates.push(...candidates);
   }
   // How the other organizations nest the same subject words: their closest section's chain, renamed into this one's.
-  const read = sections.map((section) => ({ ...section, ...readName(section.name, norms), chain: section.path.split("/services/").slice(1) })).filter((section) => section.organization && section.subject.length > 0);
+  const read = named.map((section) => ({ ...section, ...readName(section.name, norms), chain: section.path.split("/services/").slice(1) })).filter((section) => section.organization && section.subject.length > 0);
   const rootOf = (path) => path.split("/").slice(0, 2).join("/");
   for (const row of found.values()) {
     row.candidates = [...new Set(row.candidates)];
@@ -273,7 +287,7 @@ export async function* checkAll(root, { only, norms = loadNorms(), git = createG
   const mounts = [...readMounts(root, { git })];
   const classes = {
     mounts: () => checkMounts(root, { norms, git, mounts }),
-    nesting: () => checkNesting(root, { norms, git, mounts }),
+    nesting: () => checkNesting(root, { norms }),
     subjects: () => checkSubjects(root, { norms }),
     forbidden: () => checkForbidden(root, { norms }),
     layout: () => reportLayout(root, { norms }),
@@ -383,7 +397,8 @@ export function checkStaged(repository, { root, base, tree, norms = loadNorms(),
         if ((row.type === "directory") === isDirectory && row.matches.test(prefix)) find(`forbidden\0${row.rule}\0${prefix}`, { class: "forbidden", kind: "forbidden", rule: row.rule, [isDirectory ? "directory" : "file"]: prefix, mode: row.mode, outcome: "refused", ...(row.reason ? { reason: row.reason } : {}) });
       }
       if (live.layout && isDirectory) for (const row of variants) {
-        if (endsWithPath(prefix, row.from)) find(`layout\0${row.rule}\0${prefix}`, { class: "layout", rule: row.rule, found: prefix, canonical: `${prefix.slice(0, prefix.length - row.from.length)}${row.to}` });
+        const canonical = canonicalOf(prefix, row);
+        if (canonical !== null) find(`layout\0${row.rule}\0${prefix}`, { class: "layout", rule: row.rule, found: prefix, canonical });
       }
       if (live.subjects) for (const row of owned.rows) {
         if (quiet.has(row.subject) || !row.named(names[depth - 1]) || under(rooted(prefix), row.owner)) continue;
@@ -400,15 +415,18 @@ export function checkStaged(repository, { root, base, tree, norms = loadNorms(),
     const mounting = declared(tree ?? "").filter(({ path, url }) => !before.has(`${path}\0${url}`) || added.has(path));
     const rules = mountsOf(norms), one = norms.mounts?.onePerRepository;
     // Read once, and only when the commit mounts something: every other mount under the superrepository.
-    const elsewhere = one && mounting.length > 0 ? [...readMounts(top, { git })] : [];
+    const elsewhere = (one || norms.nesting) && mounting.length > 0 ? [...readMounts(top, { git })] : [];
     for (const { path, url } of mounting) {
       const mounted = rooted(path);
       for (const finding of mountFindings(rules, { mounted, url })) findings.push({ class: "mounts", ...finding, repository: directory, path });
       const key = one ? mountKey(url, norms) : null;
-      const others = key === null ? [] : elsewhere.filter((other) => other.mounted !== mounted && mountKey(other.url, norms) === key);
+      const others = key === null || !one ? [] : elsewhere.filter((other) => other.mounted !== mounted && mountKey(other.url, norms) === key);
       if (others.length > 0) findings.push({ class: "duplicate-mounts", kind: "duplicate-mount", rule: one.rule, repository: directory, path, urls: [...new Set([url, ...others.map((other) => other.url)])].sort(), mounts: [...new Set([mounted, ...others.map((other) => other.mounted)])].sort() });
-      const missing = missingParentWords(mounted, norms);
-      if (missing.length > 0) findings.push({ class: "nesting", kind: "nesting", rule: norms.nesting.rule, repository: directory, path: mounted, name: path.split("/").pop(), parent: mounted.replace(/\/services\/[^/]+$/u, ""), reasons: [`its name lacks its parent's words: ${missing.join(", ")}`] });
+      if (norms.nesting && path.endsWith(norms.sectionSuffix)) {
+        const sections = [...new Set([...elsewhere.map((other) => other.mounted), mounted])].filter((other) => other.endsWith(norms.sectionSuffix)).map((other) => ({ path: other, name: other.split("/").pop() }));
+        const { reasons } = placementReasons(placementOf(sections), mounted, { engineCodes: norms.nesting.engineCodes, names: new Map(sections.map((other) => [other.path, other.name])) });
+        if (reasons.length > 0) findings.push({ class: "nesting", kind: "nesting", rule: norms.nesting.rule, repository: directory, path: mounted, name: path.split("/").pop(), parent: mounted.replace(/\/services\/[^/]+$/u, ""), reasons });
+      }
     }
   }
   return findings;

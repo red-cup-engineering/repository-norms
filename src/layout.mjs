@@ -22,6 +22,15 @@ import { loadNorms } from "./naming.mjs";
 
 const under = (path, directory) => directory === "" || path === directory || path.startsWith(`${directory}/`);
 const endsWithPath = (path, tail) => path === tail || path.endsWith(`/${tail}`);
+/**
+ * The canonical path of `path` under a relocation row, or null when the row does not relocate it. A row relocates only
+ * its variant: a path already at the canonical path (it ends with `to`) is never a variant, and a row whose `from` is
+ * its `to` moves nothing. So the canonical path is never itself found, and applying a row twice is a no-op.
+ */
+export function canonicalOf(path, { from, to }) {
+  if (from === to || !endsWithPath(path, from) || endsWithPath(path, to)) return null;
+  return `${path.slice(0, path.length - from.length)}${to}`;
+}
 // A directory another process removed during the walk reads as empty.
 const entries = (directory) => { try { return readdirSync(directory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)); } catch (error) { if (error.code === "ENOENT") return []; throw error; } };
 const isRepository = (directory) => existsSync(join(directory, ".git"));
@@ -117,8 +126,8 @@ export function* checkLayout(root, { rule, norms = loadNorms() } = {}) {
   const rules = relocations.filter((entry) => !rule || entry.rule === rule);
   for (const { repository, path } of walkDirectories(root, { skip })) {
     for (const entry of rules) {
-      if (!endsWithPath(path, entry.from)) continue;
-      const canonical = `${path.slice(0, path.length - entry.from.length)}${entry.to}`;
+      const canonical = canonicalOf(path, entry);
+      if (canonical === null) continue;
       const plan = planRelocation(repository, path, canonical);
       yield {
         rule: entry.rule, repository, found: path, canonical, files: plan.files, canonicalExists: plan.canonicalExists,
@@ -143,6 +152,32 @@ function removeEmptyDirectories(directory) {
 function textFiles(repository, git, skip, patterns) {
   const output = git(repository, ["grep", "-l", "-z", "-I", "--untracked", "-E", ...patterns.flatMap((p) => ["-e", p])], { ok: [0, 1] });
   return output.split("\0").filter(Boolean).filter((file) => !file.split("/").some((_, i, parts) => skip.some((tail) => endsWithPath(parts.slice(0, i + 1).join("/"), tail))));
+}
+
+/** What a mention of a variant path that is still standing is: the classes `relocate` reports `remaining` references by. */
+export const REMAINING = Object.freeze({
+  moved: "resolves to a moved path, not rewritten",
+  absolute: "absolute path or URL",
+  none: "names no moved path",
+  ambiguous: "ambiguous: the planner held its plan",
+});
+
+/**
+ * The class of one mention of a variant path in `line`: an absolute path or URL (the token holding it starts at `/`,
+ * `~` or a scheme, so it is not a path of this repository); one that, read repository-relative or relative to the
+ * file it stands in (`origin`, where the file stood before the move), is a moved file or a directory holding one; else
+ * one that names no moved path (prose, a missing file, a file a collision kept in place).
+ */
+function classifyRemaining(line, found, { origin, moved }) {
+  const start = found.index, end = start + found[0].length;
+  let from = start, to = end;
+  while (from > 0 && !/[\s"'`()<>[\],;]/u.test(line[from - 1])) from -= 1;
+  while (to < line.length && !/[\s"'`()<>[\],;]/u.test(line[to])) to += 1;
+  const token = line.slice(from, to);
+  if (/^(?:[a-z][a-z0-9+.-]*:\/\/|\/|~)/iu.test(token)) return REMAINING.absolute;
+  const resolved = new Set([posix.normalize(found[0]).replace(/\/$/u, ""), posix.join(posix.dirname(origin), found[0]).replace(/\/$/u, "")]);
+  for (const path of resolved) for (const old of moved.keys()) if (old === path || old.startsWith(`${path}/`)) return REMAINING.moved;
+  return REMAINING.none;
 }
 
 /**
@@ -172,7 +207,7 @@ function rewriteReferences(repository, entry, { moved, apply, git, skip }) {
     planned = planMovedPathReferenceUpdates({ tracked, moves: [...moved].map(([from, to]) => ({ from, to })), files: files.map(({ path, text: read }) => ({ path, text: read })) });
   } catch (error) {
     if (error.code !== "ERR_AMBIGUOUS_DIRECTORY_REFERENCE") throw error;
-    remaining.push({ file: error.path, text: error.reference, reason: "the reference planner held its plan: a bare directory name may not be a path" });
+    remaining.push({ file: error.path, text: error.reference, class: REMAINING.ambiguous, reason: "the reference planner held its plan: a bare directory name may not be a path" });
   }
   const after = new Map(planned.map((plan) => [plan.path, plan]));
   const mention = new RegExp(`(?<![A-Za-z0-9_-])(?:[A-Za-z0-9_.@-]+/)*${escapeRegExp(entry.from)}(?![A-Za-z0-9_-])(?:/[A-Za-z0-9_.@%-]+)*/?`, "gu");
@@ -180,9 +215,12 @@ function rewriteReferences(repository, entry, { moved, apply, git, skip }) {
     const plan = after.get(file.path);
     for (const update of plan?.updates ?? []) rewritten.push({ file: file.path, from: update.from, to: update.to, count: update.count });
     if (plan && apply) writeFileSync(join(repository, file.at), plan.text);
-    (plan?.text ?? file.text).split("\n").forEach((line, index) => { for (const [found] of line.matchAll(mention)) remaining.push({ file: file.path, line: index + 1, text: found, reason: "left by the reference planner" }); });
+    const origin = apply ? oldOf.get(file.at) ?? file.at : file.at;
+    (plan?.text ?? file.text).split("\n").forEach((line, index) => {
+      for (const found of line.matchAll(mention)) remaining.push({ file: file.path, line: index + 1, text: found[0], class: classifyRemaining(line, found, { origin, moved }), reason: "left by the reference planner" });
+    });
   }
-  return { rewritten, remaining };
+  return { rewritten, remaining, remainingByClass: Object.fromEntries(Object.values(REMAINING).map((name) => [name, remaining.filter((row) => row.class === name).length])) };
 }
 
 /** Moves a whole directory with the relocating-directory service: one rename, never a merge or an overwrite. */

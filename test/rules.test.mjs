@@ -124,25 +124,19 @@ test("a mount is checked against the rules by its remote and its name, and a rep
   assert.deepEqual([named("services/kept-bad-section", "https://github.com/x/kept-bad-section"), named("services/kept-good-section", "https://github.com/x/kept-good-section.git"), named("services/renamed", "https://github.com/x/kept-bad-section")], [["one-kept"], [], ["one-kept"]]);
 });
 
-test("a section's name carries its parent's words; one that does not is reported with its parent and the paths the other trees give its subject", async () => {
-  const norms = { ...loadNorms(), nesting: { rule: "name-specialises-parent", words: true, engineCodes: [], except: ["561-group-excused-services-section"], candidates: 3 } };
-  const mounts = [
-    "services/engineering-services-section", "services/engineering-services-section/services/computer-engineering-services-section",
-    "services/engineering-services-section/services/computer-engineering-services-section/services/computer-data-engineering-services-section",
-    "services/engineering-services-section/services/computer-engineering-services-section/services/computer-data-engineering-services-section/services/computer-indigenous-data-engineering-services-section",
-    "services/engineering-services-section/services/computer-engineering-services-section/services/repository-norms",
-    "services/561-group-services-section", "services/561-group-services-section/services/561-group-engineering-services-section",
-    "services/561-group-services-section/services/561-group-engineering-services-section/services/561-group-board-of-directors",
-    "services/561-group-services-section/services/561-group-engineering-services-section/services/561-group-indigenous-data-services-section",
-    "services/561-group-services-section/services/561-group-engineering-services-section/services/561-group-excused-services-section",
-    "services/561-group-services-section/services/561-group-board-of-directors",
-  ].map((mounted) => ({ mounted, url: `https://github.com/x/${mounted.split("/").pop()}` }));
-  const rows = await collect(checkNesting("/nowhere", { norms, mounts }));
-  assert.deepEqual(rows.map((row) => [row.name, row.parent.split("/").pop(), row.reasons, row.candidates]), [
-    ["561-group-board-of-directors", "561-group-engineering-services-section", ["its name lacks its parent's words: engineering"], []],
-    ["561-group-indigenous-data-services-section", "561-group-engineering-services-section", ["its name lacks its parent's words: engineering"],
-      ["services/561-group-services-section/services/561-group-computer-services-section/services/561-group-computer-data-services-section/services/561-group-computer-indigenous-data-services-section"]],
+test("nesting is the law's derive-section-path placement, called once: a section its name places elsewhere, or seats more specifically than its name says, is reported with the derived path", async () => {
+  const norms = { ...loadNorms(), nesting: { rule: "name-specialises-parent", words: true, engineCodes: ["SS003", "SS004", "SS005"], except: ["storage-engineering-services-section"], candidates: 3 } };
+  const root = "services/engineering-services-section", computer = `${root}/services/computer-engineering-services-section`, data = `${computer}/services/computer-data-engineering-services-section`;
+  const sections = [root, computer, data, `${data}/services/computer-indigenous-data-engineering-services-section`, `${data}/services/computer-mystery-engineering-services-section`, `${computer}/services/storage-engineering-services-section`, `${root}/services/computer-data-engineering-services-section`]
+    .map((path) => ({ path, name: path.split("/").pop() }));
+  const rows = await collect(checkNesting("/nowhere", { norms, sections }));
+  assert.deepEqual(rows.map((row) => [row.name, row.parent.split("/").pop(), row.reasons.map((reason) => reason.split(" ")[0]), row.candidates.map((path) => path.split("/").pop())]), [
+    ["computer-data-engineering-services-section", "engineering-services-section", ["SS003"], ["computer-data-engineering-services-section"]],
+    ["computer-mystery-engineering-services-section", "computer-data-engineering-services-section", ["SS005"], ["computer-mystery-data-engineering-services-section"]],
   ]);
+  assert.equal(rows[0].candidates[0], data);
+  // A name that does not carry its parent's words but is placed where the law derives it is not a finding of this package's own.
+  assert.deepEqual(await collect(checkNesting("/nowhere", { norms, sections: sections.slice(0, 5).filter((row) => !row.name.includes("mystery") && row.path !== sections[6].path) })), []);
 });
 
 test("a file or directory named for a subject outside its owning section is reported, a directory once; a missing owner is reported", async (t) => {
@@ -190,7 +184,7 @@ test("the staged check reads only what a commit adds or modifies: standing viola
   assert.equal(git(root, "status", "--porcelain", "--ignore-submodules=all"), "");
 });
 
-test("the staged check reads the mounts a commit adds: the mount rules, a second mount of one repository, and the parent's words; a moved pointer is not a mount", (t) => {
+test("the staged check reads the mounts a commit adds: the mount rules, a second mount of one repository, and the placement its name derives; a moved pointer is not a mount", (t) => {
   const { root, child, origin } = forest(t);
   const norms = { ...NORMS, nesting: { rule: "name-specialises-parent", words: true } };
   const staged = (directory) => checkStaged(directory, { norms }).map((row) => `${row.class} ${row.rule} ${row.mounted ?? row.mounts ?? row.path}`).sort();
@@ -203,9 +197,9 @@ test("the staged check reads the mounts a commit adds: the mount rules, a second
   assert.deepEqual(staged(root), ["duplicate-mounts one-mount-per-repository lib/child,services/child", "mounts child-in-services lib/child", "mounts no-other services/other"]);
   git(root, "commit", "-qm", "mounted");
   assert.deepEqual(staged(root), []);
-  mkdirSync(join(root, "services/computer-engineering-services-section/services"), { recursive: true });
-  git(root, "submodule", "add", "-q", join(dirname(origin("other")), "other.git"), "services/computer-engineering-services-section/services/561-group-board-of-directors");
-  assert.deepEqual(staged(root).filter((row) => row.startsWith("nesting")), ["nesting name-specialises-parent services/computer-engineering-services-section/services/561-group-board-of-directors"]);
+  // Its name places it under services/engineering-services-section; standing at the top of services/, the law's derivation puts it elsewhere.
+  git(root, "submodule", "add", "-q", join(dirname(origin("other")), "other.git"), "services/computer-engineering-services-section");
+  assert.deepEqual(staged(root).filter((row) => row.startsWith("nesting")), ["nesting name-specialises-parent services/computer-engineering-services-section"]);
 });
 
 test("through git-engine's commit pass: a repository adding a violating path is refused, deleting it passes, and a parent adding a forbidden mount is refused", (t) => {

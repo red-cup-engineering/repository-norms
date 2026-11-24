@@ -1,39 +1,27 @@
 #!/usr/bin/env node
 import { execGitSync } from "@red-cup-engineering/git-engine/git-process";
-/**
- * repository-norms check [DIR] [--warn]      one checkout: its own name and its submodules (CI)
- * repository-norms estate --org ORG [...]    every non-archived repository name of the organizations (JSON lines)
- * repository-norms frontdoor [DIR] [--json] [--warn]    evidence-bound README entry-page observations
- * repository-norms layout [ROOT] [--rule RULE] [--warn]   every directory a layout rule relocates, under ROOT (JSON lines)
- * repository-norms relocate [ROOT] --rule RULE [--apply [--worktree]]  move one rule's directories onto their canonical paths (JSON lines)
- * repository-norms forbidden [ROOT] [--apply]               every file whose name is forbidden; --apply removes them (JSON lines)
- * repository-norms manifests [ROOT] [--apply]               every root manifest without Node.js source; --apply removes them (JSON lines)
- * repository-norms readmes [ROOT] [--apply]                 every README alone among directories; --apply removes them (JSON lines)
- * repository-norms remove-paths [ROOT] [--apply]            removes the paths listed on stdin as JSON lines {"path": …} relative to ROOT, from the worktree only (JSON lines)
- * repository-norms census [ROOT]                          directory names at the layout positions, and candidate rules (JSON lines)
- * repository-norms mounts [ROOT]                            every submodule mounted where a mount rule forbids it, or mounted twice (JSON lines)
- * repository-norms nesting [ROOT]                           every mounted section whose name does not specialise its parent's (JSON lines)
- * repository-norms subjects [ROOT]                          every file or directory named for a subject outside its owning section (JSON lines)
- * repository-norms check-all [ROOT] [--class CLASS]...      every rule class over the tree; exit 1 on any finding (JSON lines)
- * repository-norms check-staged [REPOSITORY] [--root ROOT] [--base REV] [--tree TREE]   what one commit would newly violate; exit 1 on any finding (JSON lines)
- */
+// Commands and arguments: src/usage.mjs (`repository-norms --help`).
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { classifyName, loadNorms } from "../src/naming.mjs";
 import { checkSubmodules } from "../src/submodules.mjs";
 import { assessFrontdoor } from "../src/frontdoor.mjs";
-import { censusLayout, relocate, reportLayout } from "../src/layout.mjs";
+import { REMAINING, censusLayout, relocate, reportLayout } from "../src/layout.mjs";
 import { bareReadmes, forbiddenFiles, sourcelessManifests } from "../src/removals.mjs";
 import { readFileSync } from "node:fs";
+import { usageText } from "../src/usage.mjs";
 import { checkAll, checkMounts, checkNesting, checkStaged, checkSubjects, removePaths } from "../src/rules.mjs";
 
-const { values, positionals } = parseArgs({ allowPositionals: true, options: { org: { type: "string", multiple: true }, warn: { type: "boolean", default: false }, json: { type: "boolean", default: false }, rule: { type: "string" }, apply: { type: "boolean", default: false }, worktree: { type: "boolean", default: false }, root: { type: "string" }, base: { type: "string" }, tree: { type: "string" }, class: { type: "string", multiple: true } } });
-const [command = "check", dir = "."] = positionals;
+const { values, positionals } = parseArgs({ allowPositionals: true, options: { org: { type: "string", multiple: true }, warn: { type: "boolean", default: false }, json: { type: "boolean", default: false }, rule: { type: "string" }, apply: { type: "boolean", default: false }, worktree: { type: "boolean", default: false }, root: { type: "string" }, base: { type: "string" }, tree: { type: "string" }, class: { type: "string", multiple: true }, help: { type: "boolean", short: "h", default: false } } });
+const [command, dir = "."] = positionals;
 const norms = loadNorms();
 const line = (row) => process.stdout.write(`${JSON.stringify(row)}\n`);
 const git = (...a) => execGitSync(["-C", dir, ...a], { encoding: "utf8", maxBuffer: 256 << 20, stdio: ["ignore", "pipe", "pipe"] });
 
-if (command === "check") {
+if (values.help || command === undefined) {
+  process.stdout.write(usageText());
+  if (!values.help) process.exitCode = 2;
+} else if (command === "check") {
   const findings = [];
   const origin = (() => { try { return git("remote", "get-url", "origin").trim(); } catch { return ""; } })();
   const slug = process.env.GITHUB_REPOSITORY ?? /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/u.exec(origin)?.[1];
@@ -74,10 +62,15 @@ if (command === "check") {
   for (const row of relocate(dir, { rule: values.rule, apply: values.apply, worktree: values.worktree, norms })) {
     line(row);
     if (row.kind === "relocation") for (const [key, n] of [[row.outcome, 1], ["files moved", row.moved ?? 0], ["files dropped as identical", row.dropped ?? 0], ["files kept on collision", row.kept?.length ?? 0], ["files failed", row.failed?.length ?? 0]]) counts[key] = (counts[key] ?? 0) + n;
-    else for (const key of ["rewritten", "remaining"]) counts[`references ${key}`] = (counts[`references ${key}`] ?? 0) + row[key].length;
+    else {
+      counts["references rewritten"] = (counts["references rewritten"] ?? 0) + row.rewritten.length;
+      for (const [name, n] of Object.entries(row.remainingByClass)) if (n) counts[`references left, ${name}`] = (counts[`references left, ${name}`] ?? 0) + n;
+    }
   }
   process.stderr.write(`${JSON.stringify(counts)}\n`);
-  if (counts["files failed"]) process.exitCode = 1;
+  const left = counts[`references left, ${REMAINING.moved}`];
+  if (Object.keys(counts).some((key) => key.startsWith("references left"))) process.stderr.write(`references left are mentions of the variant path the planner did not rewrite: "${REMAINING.moved}" is a defect (exit 1); "${REMAINING.absolute}" and "${REMAINING.none}" are not this repository's moved paths; "${REMAINING.ambiguous}" is a bare name the planner could not tell from a word\n`);
+  if (counts["files failed"] || left) process.exitCode = 1;
 } else if (command === "forbidden" || command === "manifests" || command === "readmes") {
   const counts = {};
   for (const row of ({ forbidden: forbiddenFiles, manifests: sourcelessManifests, readmes: bareReadmes })[command](dir, { apply: values.apply, norms })) { line(row); counts[row.outcome] = (counts[row.outcome] ?? 0) + 1; }
@@ -107,6 +100,6 @@ if (command === "check") {
     }
   }
 } else {
-  process.stderr.write("usage: repository-norms check [DIR] [--warn] | frontdoor [DIR] [--json] [--warn] | layout [ROOT] [--rule RULE] [--warn] | relocate [ROOT] --rule RULE [--apply [--worktree]] | forbidden [ROOT] [--apply] | manifests [ROOT] [--apply] | readmes [ROOT] [--apply] | remove-paths [ROOT] [--apply] | census [ROOT] | mounts [ROOT] | nesting [ROOT] | subjects [ROOT] | check-all [ROOT] [--class CLASS]... | check-staged [REPOSITORY] [--root ROOT] [--base REV] [--tree TREE] | estate --org ORG [--org ORG]...\n");
+  process.stderr.write(`unknown command ${command}\n${usageText()}`);
   process.exitCode = 2;
 }

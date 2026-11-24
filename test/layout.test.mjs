@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { censusLayout, relocate, reportLayout } from "../src/layout.mjs";
+import { canonicalOf, censusLayout, relocate, reportLayout } from "../src/layout.mjs";
 import { loadNorms } from "../src/naming.mjs";
 import { bareReadmes, forbiddenFiles, sourcelessManifests } from "../src/removals.mjs";
 
@@ -154,12 +154,13 @@ test("references that provably name a moved path are rewritten; the rest are lis
   // It reads `content/documents/` in lib/unit/README.md from the repository root too, where lib/unit's own kept directory was meant.
   assert.equal(read(root, "lib/unit/README.md"), "[kept](content/documents/kept.md) in [dir](content/text/documents/)\n");
   assert.equal(read(root, "lib/legacy/old.md"), "[a](../../content/documents/a.md)\n");
-  assert.deepEqual(remaining.map((row) => [row.file, row.text, row.reason]), [
-    ["README.md", "content/documents/missing.md", "left by the reference planner"],
-    ["README.md", "srv/content/documents/a.md", "left by the reference planner"],
-    ["content/text/documents/a.md", "example.invalid/content/documents/a.md", "left by the reference planner"],
-    ["lib/unit/README.md", "content/documents/kept.md", "left by the reference planner"],
+  assert.deepEqual(remaining.map((row) => [row.file, row.text, row.class]), [
+    ["README.md", "content/documents/missing.md", "names no moved path"],
+    ["README.md", "srv/content/documents/a.md", "absolute path or URL"],
+    ["content/text/documents/a.md", "example.invalid/content/documents/a.md", "absolute path or URL"],
+    ["lib/unit/README.md", "content/documents/kept.md", "names no moved path"],
   ]);
+  assert.deepEqual(dry.remainingByClass, { "resolves to a moved path, not rewritten": 0, "absolute path or URL": 2, "names no moved path": 2, "ambiguous: the planner held its plan": 0 });
   assert.deepEqual(rewritten.map((row) => `${row.file}: ${row.from} -> ${row.to}`), [
     "README.md: content/documents/a.md -> content/text/documents/a.md",
     "README.md: ./content/documents -> ./content/text/documents",
@@ -325,4 +326,64 @@ test("a README alone among directories is removed; hidden names do not count, an
   assert.equal(read(root, "docs/sub/README.md"), "leaf\n");
   assert.equal(read(root, "node_modules/README.md"), "dep\n");
   assert.deepEqual(status(child), ["D README.md", "D file"]);
+});
+
+const NORMS_WITH = (relocations) => { const norms = loadNorms(); return { ...norms, layout: { ...norms.layout, relocations } }; };
+
+test("a directory at the canonical path is never a variant: a variant matches only the variant path, and a rule applied twice is a no-op", (t) => {
+  const { root, child } = forest(t, { child: {
+    "data/records/agent-records/characters/ada/f.md": "canonical\n", "data/records/agent-records/skills/s/f.md": "canonical\n",
+    "lib/agency/skills/t/f.md": "variant\n", "characters/bo/f.md": "variant\n", "x/schema/a.json": "{}\n", "x/schemas/a.json": "{}\n",
+  } });
+  const relocations = [
+    { rule: "characters", from: "characters", to: "data/records/agent-records/characters" },
+    { rule: "skills", from: "lib/agency/skills", to: "data/records/agent-records/skills" },
+    { rule: "same", from: "data/records/agent-records/skills", to: "data/records/agent-records/skills" },
+    { rule: "schema", from: "schema", to: "schemas" },
+  ];
+  const norms = NORMS_WITH(relocations);
+  const found = () => [...reportLayout(root, { norms })].map((row) => `${row.rule} ${row.found} -> ${row.canonical}`).sort();
+  assert.deepEqual(found(), ["characters characters -> data/records/agent-records/characters", "schema x/schema -> x/schemas", "skills lib/agency/skills -> data/records/agent-records/skills"]);
+  for (const { rule } of relocations) [...relocate(root, { rule, apply: true, norms })];
+  assert.deepEqual(found(), []);
+  assert.equal(read(child, "data/records/agent-records/characters/bo/f.md"), "variant\n");
+  assert.equal(existsSync(join(child, "data/records/agent-records/characters/data")), false);
+  for (const { rule } of relocations) assert.deepEqual([...relocate(root, { rule, apply: true, norms })], []);
+});
+
+test("no rule of the section law finds its own canonical path, and none finds a path twice", () => {
+  for (const entry of loadNorms().layout.relocations) {
+    assert.equal(canonicalOf(entry.to, entry), null, entry.rule);
+    const canonical = canonicalOf(entry.from, entry);
+    if (canonical !== null) assert.equal(canonicalOf(canonical, entry), null, entry.rule);
+  }
+  assert.equal(canonicalOf("a/characters", { from: "characters", to: "data/records/agent-records/characters" }), "a/data/records/agent-records/characters");
+  assert.equal(canonicalOf("data/records/agent-records/characters", { from: "characters", to: "data/records/agent-records/characters" }), null);
+  assert.equal(canonicalOf("a/b", { from: "b", to: "x/b" }), "a/x/b");
+  assert.equal(canonicalOf("a/x/b", { from: "b", to: "x/b" }), null);
+});
+
+const bin = (...args) => spawnSync(process.execPath, [new URL("../bin/repository-norms.mjs", import.meta.url).pathname, ...args], { encoding: "utf8" });
+
+test("with no arguments or --help the tool prints each command with its arguments and says which ones change the tree, and with which flag", () => {
+  for (const run of [bin(), bin("--help")]) {
+    for (const command of ["check", "estate", "frontdoor", "layout", "relocate", "forbidden", "manifests", "readmes", "remove-paths", "census", "mounts", "nesting", "subjects", "check-all", "check-staged"]) assert.match(run.stdout, new RegExp(`^  ${command} `, "mu"), command);
+    assert.match(run.stdout, /relocate \[ROOT\] --rule RULE.*\[CHANGES THE TREE: --apply/u);
+    assert.match(run.stdout, /forbidden \[ROOT\] \[--apply\].*\[CHANGES THE TREE: --apply removes them\]/u);
+    assert.doesNotMatch(run.stdout, /layout .*CHANGES THE TREE/u);
+  }
+  assert.equal(bin("--help").status, 0);
+  assert.equal(bin().status, 2);
+});
+
+test("relocate says what each class of remaining reference is, and fails only for a reference to a moved path it left unrewritten", (t) => {
+  const clean = forest(t, { parent: { "content/documents/a.md": "a\n", "README.md": "see content/documents/missing.md and /srv/content/documents/a.md and https://example.invalid/content/documents/a.md\n" } });
+  const ok = bin("relocate", clean.root, "--rule", RULE, "--apply");
+  assert.match(ok.stderr, /"references left, absolute path or URL":2/u);
+  assert.match(ok.stderr, /"references left, names no moved path":1/u);
+  assert.equal(ok.status, 0, ok.stderr);
+  const left = forest(t, { parent: { "content/documents/a.md": "a\n", "docs/x.md": "[y](./../content/documents/a.md)\n" } });
+  const bad = bin("relocate", left.root, "--rule", RULE);
+  assert.match(bad.stderr, /"references left, resolves to a moved path, not rewritten":1/u);
+  assert.equal(bad.status, 1);
 });
