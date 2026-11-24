@@ -27,7 +27,7 @@ The 561 Group's repository norms, as checks that run in CI and across the estate
   `layout.relocations`: a path variant (`from`) and its canonical path (`to`), read at any depth of a repository.
   A row with `hold` is reported but not fixed. A new rule is a new row, not new code.
 
-The norms are data in [`norms.json`](norms.json).
+The naming settings are data in [`norms.json`](norms.json); every placement rule is read from the section law (the service-section engineering section and the Group section's content taxonomy).
 
 ## First-visit clarity checks
 
@@ -155,7 +155,7 @@ node bin/repository-norms.mjs check-staged REPOSITORY [--root ROOT] [--base REV]
   entry from each manifest that named it. Run them in that order: each can leave the next more to find.
 - `census` counts directory names under each `layout.positions` path of each repository root (`name` rows), then
   proposes rules (`candidate` rows): singular and plural forms, hyphen, underscore or case differences, and one name at
-  two depths. The proposed canonical is the ruling in `norms.json` when there is one, otherwise the seat
+  two depths. The proposed canonical is the ruling in the section law when there is one, otherwise the seat
   `layout.standard` states for that name, otherwise the form more repositories use; `basis` says which.
 
 In GitHub Actions, call the reusable workflow

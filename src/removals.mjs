@@ -1,5 +1,5 @@
 /**
- * Removal norms over a tree of checked-out repositories, each one data in `norms.json` `layout`:
+ * Removal norms over a tree of checked-out repositories, each one data in the section law's `layout`:
  * - `forbidden`: path globs no repository holds, at any depth (the walk is in rules.mjs);
  * - `manifests`: a repository that offers no Node.js source holds no package manifest at its root;
  * - `bareReadmes`: a directory holding only directories and a README holds no README.

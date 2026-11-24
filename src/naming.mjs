@@ -5,8 +5,14 @@
  * application, library or service under its plain name. Dated snapshots are archives, not renamed.
  */
 import { readFileSync } from "node:fs";
+import { readSectionLaw } from "@red-cup-engineering/service-section-engineering-services-section/section-law";
 
-export const loadNorms = () => JSON.parse(readFileSync(new URL("../norms.json", import.meta.url), "utf8"));
+/** The norms: this package's naming settings (`norms.json`) and every placement rule, read from the section law
+ * (`readSectionLaw`: layout, mounts, nesting, subjects). This package holds no placement rule of its own. */
+export const loadNorms = ({ forestRoot } = {}) => ({
+  ...JSON.parse(readFileSync(new URL("../norms.json", import.meta.url), "utf8")),
+  ...readSectionLaw(forestRoot === undefined ? {} : { forestRoot }),
+});
 
 const segments = (name) => name.split("-");
 const hasDomain = (base, domain) => {

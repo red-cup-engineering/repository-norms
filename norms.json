@@ -1,135 +1,41 @@
 {
   "kind": "repository-norms.v1",
-  "sourceOfAuthority": "Leader, 2026-10-21: \"we want to normalize the names, x-engineering-services-section, x-science-services-section, etc., or just, the straight app or library name. everything proper submodules, and preferably with real repo and packages to help us manage and enforce these norms.\" House rule every-repository-package-and-section-has-one-home: a section, its package and its repository are one unit, and the directory that composes it is named for its repository.",
+  "sourceOfAuthority": "Leader, 2026-10-21: \"we want to normalize the names, x-engineering-services-section, x-science-services-section, etc., or just, the straight app or library name. everything proper submodules, and preferably with real repo and packages to help us manage and enforce these norms.\" House rule every-repository-package-and-section-has-one-home: a section, its package and its repository are one unit, and the directory that composes it is named for its repository. Every placement rule (layout relocations, forbidden paths, manifests, READMEs, mounts, nesting, subject owners) is the section law, kept in the service-section engineering section and the Group section's content taxonomy; this file holds only the naming settings.",
   "sectionSuffix": "-services-section",
   "organizations": {
-    "lenticule-science": { "domain": "science", "style": "suffix" },
-    "red-cup-engineering": { "domain": "engineering", "style": "suffix" },
-    "coesite-operations": { "domain": "operations", "style": "suffix" },
-    "causeway-services": { "domain": "public", "style": "prefix" },
-    "561-group": { "domain": "561-group", "style": "prefix" }
-  },
-  "sectionTypos": [
-    ["-service-section$", "-services-section"],
-    ["-services-sector$", "-services-section"]
-  ],
-  "archive": "^\\d{4}-\\d{2}-\\d{2}-",
-  "meta": [".github"],
-  "layout": {
-    "sourceOfAuthority": "The services section form (561-group-services-section data/records/schemas/services-section-form.schema.json, laws contentUnderContentText and dataTrioOnly, and services-section-form-content-taxonomy.json): every section, package and unit shares one recursive directory layout. `standard` lists the directory names that form states for each position (the names under `data` are the data-custody-directory service's and are read from it) (its knownTopLevelNames, recognized content roles, contentTaxonomyPaths, dataTrioNames and relocation targets); the census proposes them as canonical. Each relocation is one ruling: `from` is a path variant and `to` the canonical path, both relative to the same directory at any depth of a repository. A relocation with `hold` is reported by the check and the census and refused by the fix.",
-    "skip": [".git", "node_modules", "data/state", "lib/legacy"],
-    "positions": ["", "content", "content/text", "content/text/documents", "content/text/documents/articles", "data", "data/records", "lib"],
-    "standard": {
-      "": ["content", "data", "src", "scripts", "apps", "test", "publications", "services", "lib", "sites"],
-      "content": ["text", "agent-cards", "agent-card-signing", "deployment", "config", "assets", "evm", "offices", "contracts", "offers", "media", "policies", "micro-enterprises", "packets", "capcell", "exchanges", "works", "curricula", "source-packets", "sku", "lesson-briefs", "duties", "books", "accounts", "references", "provider-admissions", "manifests", "incumbencies", "characters", "activitypub"],
-      "content/text": ["glossary", "documents"],
-      "content/text/documents": ["articles"],
-      "content/text/documents/articles": ["notes", "teaching-articles", "specifications", "bibliographies", "research-articles", "template-articles"],
-      "data/records": ["schemas", "service-records"],
-      "lib": ["legacy"]
+    "lenticule-science": {
+      "domain": "science",
+      "style": "suffix"
     },
-    "relocations": [
-      {
-        "rule": "documents-under-content-text",
-        "from": "content/documents",
-        "to": "content/text/documents",
-        "reason": "emsenn, 2026-11-24: \"across the repo, we NEVER have content/documents and only have content/text/documents/\". The services section form states the same as law contentUnderContentText."
-      },
-      {
-        "rule": "schemas-under-data-records",
-        "from": "data/records/schema",
-        "to": "data/records/schemas",
-        "reason": "emsenn, 2026-11-24: under data/records/, schemas/ is correct and schema/ is the misspelling (confirmed and ordered applied: \"schemas is correct\"). The services section form's content taxonomy lists the same relocation."
-      },
-      {
-        "rule": "templates-under-template-articles",
-        "from": "content/text/documents/templates",
-        "to": "content/text/documents/articles/template-articles",
-        "reason": "emsenn, 2026-11-24: templates are articles; content/text/documents/templates moves to content/text/documents/articles/template-articles."
-      },
-      {
-        "rule": "characters-under-agent-records",
-        "from": "lib/agency/characters",
-        "to": "data/records/agent-records/characters",
-        "reason": "emsenn, 2026-11-24: agent characters are records: lib/agency/characters moves to data/records/agent-records/characters (codi-obrien was put under lib/agency because nothing said otherwise)."
-      },
-      {
-        "rule": "skills-under-agent-records",
-        "from": "lib/agency/skills",
-        "to": "data/records/agent-records/skills",
-        "reason": "emsenn, 2026-11-24: lib/agency/skills moves to data/records/agent-records/skills."
-      },
-      {
-        "rule": "agents-under-agent-records",
-        "from": "lib/agency/agents",
-        "to": "data/records/agent-records/agents",
-        "reason": "emsenn, 2026-11-24: lib/agency/agents moves to data/records/agent-records/agents."
-      }
-    ],
-    "forbidden": {
-      "reason": "emsenn, 2026-11-24: \"Delete all ./NOTICE from across all directories. Delete all ./LICENSE from across all directories.\" Applies inside lib/legacy too. Each row of `paths` is one path glob (`*` within a name, `**` across names) read at any depth of a repository, or from the repository root when it starts with `/`; `type` says whether it names a file or a directory. `mode` `remove` lets the fix delete it; `refuse` is only reported, and refused at commit: a reader places its contents.",
-      "skip": [".git", "node_modules"],
-      "paths": [
-        { "rule": "no-notice", "path": "NOTICE", "type": "file", "mode": "remove" },
-        { "rule": "no-license", "path": "LICENSE", "type": "file", "mode": "remove" },
-        { "rule": "no-capability-providers-config", "path": "**/content/config/capability-providers.json", "type": "file", "mode": "remove" },
-        { "rule": "no-n-quads", "path": "**/*.nq", "type": "file", "mode": "remove" },
-        { "rule": "no-main-reconciliation-rows", "path": "repository-selected-main-reconciliation.ndjson", "type": "file", "mode": "remove" },
-        { "rule": "no-skill-scripts", "path": "lib/agency/skills/*/scripts", "type": "directory", "mode": "remove" },
-        { "rule": "no-lib-agency", "path": "lib/agency", "type": "directory", "mode": "refuse", "reason": "agent records live under data/records/agent-records: relocate --rule characters-under-agent-records, skills-under-agent-records, agents-under-agent-records" },
-        { "rule": "no-triage", "path": "triage", "type": "directory", "mode": "refuse", "reason": "a catch-all: each thing in it has a section that owns it" },
-        { "rule": "no-archive", "path": "_archive", "type": "directory", "mode": "refuse", "reason": "a catch-all: each thing in it has a section that owns it" },
-        { "rule": "no-restored-from-main", "path": "lib/legacy/restored-from-main", "type": "directory", "mode": "refuse", "reason": "a catch-all: each thing in it has a section that owns it" },
-        { "rule": "no-content-documents", "path": "content/documents", "type": "directory", "mode": "refuse", "reason": "moved, not deleted: relocate --rule documents-under-content-text" },
-        { "rule": "no-records-schema", "path": "data/records/schema", "type": "directory", "mode": "refuse", "reason": "moved, not deleted: relocate --rule schemas-under-data-records" }
-      ]
+    "red-cup-engineering": {
+      "domain": "engineering",
+      "style": "suffix"
     },
-    "manifests": {
-      "reason": "emsenn, 2026-11-24: \"If a repository does not offer Node.js software source code, do not put a package.json in it.\" A manifest that depends on a removed one loses that dependency entry.",
-      "file": "package.json",
-      "sourceExtensions": [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"],
-      "sourceSkip": ["node_modules", "lib/legacy"],
-      "entryFields": ["bin", "main", "exports"],
-      "dependencyFields": ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"],
-      "dependentSkip": [".git", "node_modules"],
-      "beside": [".npmrc", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"],
-      "keep": {
-        "@causeway-services/equivo.561.group": "equivo-service themes/equivo/build-world.mjs finds the corpus by resolving this package's package.json"
-      }
+    "coesite-operations": {
+      "domain": "operations",
+      "style": "suffix"
     },
-    "bareReadmes": {
-      "reason": "emsenn, 2026-11-24: \"if a directory has nothing but directories and a README, delete the README\". Hidden names (.git, .gitignore, .gitmodules, .gitattributes) do not count as content. Read after the forbidden and manifests removals.",
-      "file": "README.md",
-      "hidden": "^\\.",
-      "skip": [".git", "node_modules"]
+    "causeway-services": {
+      "domain": "public",
+      "style": "prefix"
+    },
+    "561-group": {
+      "domain": "561-group",
+      "style": "prefix"
     }
   },
-  "mounts": {
-    "reason": "emsenn, 2026-11-24: the same repositories keep being mounted in the wrong place. Each row names repositories by `repository` (an owner/name glob over the remote URL) or by `name` (a glob over the repository name and the mounting directory's name), less the names in `except`; `allowed` lists the only paths, relative to the superrepository root, where it may be mounted. An empty `allowed` means nowhere. `onePerRepository`: one repository is mounted at one path; with `sameName` a repository of the same name in another organization is the same repository (561-group-board-of-directors stands in 561-group and again in red-cup-engineering). `except` names the repositories (owner/name, or name) that may stand at several; the `meta` names always may.",
-    "onePerRepository": { "rule": "one-mount-per-repository", "sameName": true, "except": [] },
-    "rules": [
-      { "rule": "site-at-superrepository-root", "repository": "561-group/bare-cedar-fog.colonies.union.561.group", "allowed": ["sites/bare-cedar-fog.colonies.union.561.group"] },
-      { "rule": "no-cold-red-gate", "repository": "561-group/cold-red-gate", "allowed": [] },
-      { "rule": "no-cold-red-gate-site", "repository": "561-group/cold-red-gate.colonies.union.561.group", "allowed": [] },
-      { "rule": "no-relationality-repo", "name": "*relationality-repo*", "allowed": [] },
-      { "rule": "one-relationality-section", "name": "relationality-*-services-section", "except": ["relationality-science-services-section"], "allowed": [] }
+  "sectionTypos": [
+    [
+      "-service-section$",
+      "-services-section"
+    ],
+    [
+      "-services-sector$",
+      "-services-section"
     ]
-  },
-  "nesting": {
-    "reason": "emsenn, 2026-11-24: a section's name specialises its parent section's name, the way the engineering tree does (computer-engineering-services-section, then computer-data-engineering-services-section). `words`: with the organization prefix and the section suffix taken off, every word of the parent's name is a word of the child's. `engineCodes`: the diagnostics of the services-section engine's forest lint (placement derived from the name) that count as the same violation. `except` names sections left alone; `candidates` is how many paths the sibling organizations' trees may propose.",
-    "rule": "name-specialises-parent",
-    "words": true,
-    "engineCodes": ["SS003", "SS004", "SS005"],
-    "except": [],
-    "candidates": 3
-  },
-  "subjects": {
-    "reason": "emsenn, 2026-11-24: material about one named character turns up in dozens of sections. A named subject has one owning section (`owner`, relative to the superrepository root); a file or directory anywhere else whose name contains the subject is misfiled. There is no fix: placing it needs reading.",
-    "skip": [".git", "node_modules"],
-    "rules": [
-      { "subject": "cassia-lorne", "owner": "services/public-services-section/services/public-content-services-section/services/public-media-services-section/services/public-media-personality-services-section/services/cassia-lorne-services-section" },
-      { "subject": "codi-obrien", "owner": "services/engineering-services-section/data/records/agent-records/characters/codi-obrien" },
-      { "subject": "sigmund-vexler", "owner": "services/public-services-section/services/public-content-services-section/services/public-media-services-section/services/public-media-personality-services-section/services/sigmund-vexler-services-section" }
-    ]
-  }
+  ],
+  "archive": "^\\d{4}-\\d{2}-\\d{2}-",
+  "meta": [
+    ".github"
+  ]
 }

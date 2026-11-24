@@ -241,3 +241,12 @@ test("listed paths are removed from the worktree only with apply; a path outside
   assert.deepEqual([git(root, "diff", "--cached", "--name-only"), git(child, "status", "--porcelain")], ["", "D file"], "nothing is staged");
   assert.deepEqual(await collect(removePaths(root, [{ nothing: 1 }])), [{ path: null, outcome: "refused", reason: "no path" }]);
 });
+
+test("this package holds no placement rule of its own: norms.json is naming settings, every rule is the section law's", async () => {
+  const { readFileSync } = await import("node:fs");
+  const own = JSON.parse(readFileSync(new URL("../norms.json", import.meta.url), "utf8"));
+  for (const rule of ["layout", "mounts", "nesting", "subjects", "forbidden", "manifests", "bareReadmes", "relocations"]) assert.equal(own[rule], undefined, rule);
+  const norms = loadNorms();
+  for (const rule of ["layout", "mounts", "nesting", "subjects"]) assert.ok(norms[rule], rule);
+  assert.ok(norms.mounts.rules.some((row) => row.rule === "no-cold-red-gate"));
+});

@@ -1,7 +1,7 @@
 import { createGit } from "@red-cup-engineering/git-engine/git-process";
 import { readGitmodules } from "@red-cup-engineering/git-engine/gitmodules";
 /**
- * Placement norms over a tree of checked-out repositories, each rule one row of `norms.json`:
+ * Placement norms over a tree of checked-out repositories, each rule one row of the section law (service-section engineering section):
  * - `mounts.rules`: where a repository, named by its remote URL or its name, may be mounted;
  * - `mounts.onePerRepository`: one repository is mounted at one path;
  * - `nesting`: a section's name specialises its parent section's name;

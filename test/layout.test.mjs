@@ -41,16 +41,16 @@ const rows = (root, options = {}) => [...relocate(root, { rule: RULE, ...options
 const read = (directory, path) => readFileSync(join(directory, path), "utf8");
 const status = (directory) => git(directory, "status", "--porcelain", "--ignore-submodules=all").split("\n").filter(Boolean).map((line) => line.replace(/\s+/gu, " ").trim()).sort();
 
-test("the rules are data: norms.json maps each path variant to its canonical path", () => {
+test("the rules are data: the section law maps each path variant to its canonical path", () => {
   const { relocations, skip, positions } = loadNorms().layout;
   assert.deepEqual(relocations.find((entry) => entry.rule === RULE), { ...relocations.find((entry) => entry.rule === RULE), from: "content/documents", to: "content/text/documents" });
-  assert.deepEqual(relocations.map((entry) => [entry.from, entry.to, entry.hold]), [
+  assert.deepEqual(relocations.map((entry) => [entry.from, entry.to, entry.hold]).sort(), [
     ["content/documents", "content/text/documents", undefined],
-    ["data/records/schema", "data/records/schemas", undefined],
     ["content/text/documents/templates", "content/text/documents/articles/template-articles", undefined],
+    ["data/records/schema", "data/records/schemas", undefined],
+    ["lib/agency/agents", "data/records/agent-records/agents", undefined],
     ["lib/agency/characters", "data/records/agent-records/characters", undefined],
     ["lib/agency/skills", "data/records/agent-records/skills", undefined],
-    ["lib/agency/agents", "data/records/agent-records/agents", undefined],
   ]);
   const { forbidden, manifests, bareReadmes: readmes } = loadNorms().layout;
   assert.deepEqual([forbidden.paths.slice(0, 2).map((row) => [row.path, row.type, row.mode]), forbidden.skip], [[["NOTICE", "file", "remove"], ["LICENSE", "file", "remove"]], [".git", "node_modules"]]);
@@ -221,7 +221,7 @@ test("the census counts directory names at each layout position and proposes a c
   assert.deepEqual(candidates["content/glossary"], { kind: "candidate", variant: "content/glossary", canonical: "content/text/glossary", reasons: ["same name at two depths"], repositories: 1, files: 1, canonicalRepositories: 2, canonicalFiles: 3, basis: "the services section form seats it there" });
   assert.deepEqual([candidates.schemas.canonical, candidates.schemas.reasons, candidates.schemas.canonicalRepositories], ["data/records/schemas", ["same name at two depths"], 0]);
   assert.deepEqual([candidates["data/records/service_records"].canonical, candidates["data/records/service_records"].reasons], ["data/records/service-records", ["hyphen, underscore or case"]]);
-  // A ruling in norms.json wins over everything.
+  // A ruling in the section law wins over everything.
   assert.deepEqual([candidates["data/records/schema"].canonical, candidates["data/records/schema"].reasons, candidates["data/records/schema"].basis], ["data/records/schemas", ["singular and plural"], "ruled: schemas-under-data-records"]);
   // Where nothing is stated, the form more repositories (then more files) use is proposed.
   assert.deepEqual([candidates["data/records/requirement-records"].canonical, candidates["data/records/requirement-records"].reasons, candidates["data/records/requirement-records"].basis], ["data/records/requirements-records", ["singular and plural"], "more repositories use it"]);

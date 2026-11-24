@@ -3,7 +3,7 @@ import { walkPosixPathsSync } from "@red-cup-engineering/computer-filepath-engin
 import { DATA_CUSTODY_KINDS } from "@red-cup-engineering/data-custody-directory-service";
 import { planMovedPathReferenceUpdates } from "@red-cup-engineering/service-section-engineering-services-section/plan-moved-path-reference-updates";
 /**
- * Directory layout norms over a tree of checked-out repositories. Every rule is a row of `norms.json` `layout.relocations`
+ * Directory layout norms over a tree of checked-out repositories. Every rule is a row of the section law's relocations
  * (`from` is a path variant, `to` the canonical path, both relative to the same directory at any depth of a repository):
  * - `checkLayout` reports each variant directory found;
  * - `relocate` moves one rule's variants onto their canonical paths with `git mv` inside the owning repository and
@@ -198,12 +198,12 @@ function relocateWholeDirectory(source, destination) {
  * is dropped from the variant; a file it holds with other content stays where it is and is listed in `kept`.
  * With `worktree` every move and drop is a plain rename or unlink: no git command writes, so the index is untouched.
  * Without `apply` nothing changes. Yields one `relocation` row per variant directory, then one `references` row per
- * repository changed. A rule that `norms.json` holds, and a variant directory holding a nested repository, are refused.
+ * repository changed. A rule the section law holds, and a variant directory holding a nested repository, are refused.
  */
 export function* relocate(root, { rule, apply = false, worktree = false, norms = loadNorms(), git = createGit() } = {}) {
   const { skip, relocations } = layoutOf(norms);
   const entry = relocations.find((candidate) => candidate.rule === rule);
-  if (!entry) throw new Error(`no layout rule named ${rule}; norms.json has ${relocations.map((candidate) => candidate.rule).join(", ")}`);
+  if (!entry) throw new Error(`no layout rule named ${rule}; the section law has ${relocations.map((candidate) => candidate.rule).join(", ")}`);
   if (entry.hold) throw new Error(`layout rule ${rule} is held: ${entry.hold}`);
   const changed = new Map();
   for (const { plan, ...row } of [...checkLayout(root, { rule, norms })]) {
@@ -262,11 +262,11 @@ const spelled = (name) => name.toLowerCase().replace(/[_.\s]+/gu, "-");
 const numbered = (name) => spelled(name).split("-").map(singular).join("-");
 
 /**
- * Counts the directory names found at each standard layout position (`norms.json` `layout.positions`, relative to each
+ * Counts the directory names found at each standard layout position (the section law's `layout.positions`, relative to each
  * repository's root) across the repositories under `root`, then proposes rules. Yields `name` rows
  * (`position`, `name`, `repositories`, `files`) and `candidate` rows (`variant` path, proposed `canonical` path, the
  * `reason` they look like one name, `repositories` and `files` under the variant, and the `basis` of the proposal:
- * a ruling in `norms.json`, else the seat `layout.standard` states for the name, else the form more repositories use).
+ * a ruling in the section law, else the seat `layout.standard` states for the name, else the form more repositories use).
  * Reads only.
  */
 export function* censusLayout(root, { norms = loadNorms() } = {}) {
