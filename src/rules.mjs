@@ -1,3 +1,4 @@
+import { localContentIdentityPatterns } from "@red-cup-engineering/semiotic-content-address-system/audit";
 import { createGit } from "@red-cup-engineering/git-engine/git-process";
 import { readGitmodules } from "@red-cup-engineering/git-engine/gitmodules";
 /**
@@ -274,7 +275,7 @@ export function* checkForbidden(root, { apply = false, rule, norms = loadNorms()
  */
 export function* checkContent(root, { norms = loadNorms() } = {}) {
   const { skip = [], content = [] } = norms.layout?.forbidden ?? {};
-  const rows = content.map((row) => ({ ...row, matches: globToRegExp(row.path, { anyDepth: true }), patterns: row.patterns.map((pattern) => new RegExp(pattern, "u")) }));
+  const rows = content.map((row) => ({ ...row, matches: globToRegExp(row.path, { anyDepth: true }), patterns: row.detector === "local-content-identity" ? localContentIdentityPatterns : row.patterns.map((pattern) => new RegExp(pattern, "u")) }));
   const found = [];
   walkEntries(root, { skip, visit: ({ repository, path, below, kind, absolute }) => {
     if (kind !== "file") return true;

@@ -42,6 +42,7 @@
     "@red-cup-engineering/computer-filepath-engineering-services-section": "^0.1.7-dev.0",
     "@red-cup-engineering/data-custody-directory-service": "^0.3.6-dev.0",
     "@red-cup-engineering/relocating-directory-service": "^1.0.0",
+    "@red-cup-engineering/semiotic-content-address-system": "0.1.9",
     "@red-cup-engineering/service-section-engineering-services-section": "^0.2.9-dev.0"
   }
 }
