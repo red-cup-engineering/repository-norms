@@ -268,6 +268,30 @@ export function* checkForbidden(root, { apply = false, rule, norms = loadNorms()
 }
 
 /**
+ * Every file whose text a `layout.forbidden.content` row names: the row's `path` glob picks the files (read at any
+ * depth), each of its `patterns` is read line by line, and its `outside` paths are not read. One row per line found,
+ * with `mode` `refuse`: the finding is reported, and refused at commit, never removed, for a reader rewrites the line.
+ */
+export function* checkContent(root, { norms = loadNorms() } = {}) {
+  const { skip = [], content = [] } = norms.layout?.forbidden ?? {};
+  const rows = content.map((row) => ({ ...row, matches: globToRegExp(row.path, { anyDepth: true }), patterns: row.patterns.map((pattern) => new RegExp(pattern, "u")) }));
+  const found = [];
+  walkEntries(root, { skip, visit: ({ repository, path, below, kind, absolute }) => {
+    if (kind !== "file") return true;
+    for (const row of rows) {
+      if (!row.matches.test(path) || (row.outside ?? []).some((tail) => `/${below}/`.includes(`/${tail}/`))) continue;
+      let text;
+      try { text = readFileSync(absolute, "utf8"); } catch { continue; }
+      text.split("\n").forEach((line, at) => {
+        if (row.patterns.some((pattern) => pattern.test(line))) found.push({ kind: "forbidden-content", rule: row.rule, repository, file: path, line: at + 1, mode: row.mode ?? "refuse", outcome: "refused", text: line.trim().slice(0, 160) });
+      });
+    }
+    return true;
+  } });
+  yield* found;
+}
+
+/**
  * Every file or directory under `root` named for a subject outside the section that owns it, and each owner that is
  * missing. The paths are the filepath section's `listFilepathsMatchingString`; a directory named for the subject is one
  * row with the count of `files` under it. There is no fix: the rows are the work list.
@@ -300,7 +324,7 @@ export async function* checkSectionForm(root) {
 
 /**
  * Every finding of every rule class under `root`, each row with its `class`: mounts, duplicate-mounts, nesting,
- * subjects, forbidden, layout, manifests, readmes and section-form. A class whose check cannot run is one row with
+ * subjects, forbidden, content, layout, manifests, readmes and section-form. A class whose check cannot run is one row with
  * `outcome` "check failed", so a broken check is never read as a clean tree. `only` names the classes to run (the
  * duplicate mounts are read with `mounts`).
  */
@@ -311,6 +335,7 @@ export async function* checkAll(root, { only, norms = loadNorms(), git = createG
     nesting: () => checkNesting(root, { norms }),
     subjects: () => checkSubjects(root, { norms }),
     forbidden: () => checkForbidden(root, { norms }),
+    content: () => checkContent(root, { norms }),
     layout: () => reportLayout(root, { norms }),
     manifests: () => sourcelessManifests(root, { norms }),
     readmes: () => bareReadmes(root, { norms }),
